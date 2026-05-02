@@ -1,11 +1,26 @@
 #!/usr/bin/env bash
 # common.sh — Shared functions for AD4M multi-device integration tests
+# Uses WebSocket RPC via ad4m-rpc.py (replaces the old GraphQL-over-HTTP layer)
 # shellcheck disable=SC2034  # Variables are used by sourcing scripts
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# ─── Python / websockets dependency ─────────────────────────────────────────
+
+if ! python3 -c "import websockets" 2>/dev/null; then
+    echo "ERROR: Python 'websockets' package is required." >&2
+    echo "Install with: pip3 install websockets" >&2
+    exit 1
+fi
+
+AD4M_RPC="$SCRIPT_DIR/ad4m-rpc.py"
+if [[ ! -f "$AD4M_RPC" ]]; then
+    echo "ERROR: ad4m-rpc.py not found at $AD4M_RPC" >&2
+    exit 1
+fi
 
 # ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -101,24 +116,14 @@ run_on() {
     ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$user@$host" "$@"
 }
 
-# ─── GraphQL ─────────────────────────────────────────────────────────────────
+# ─── RPC helpers ─────────────────────────────────────────────────────────────
 
-gql() {
-    local host="$1" port="$2" token="$3" query="$4" vars="${5:-"{}"}"
-    local payload
-    payload=$(jq -n --arg q "$query" --argjson v "$vars" '{"query": $q, "variables": $v}')
-    curl -sf -X POST "http://$host:$port/graphql" \
-        -H "Content-Type: application/json" \
-        -H "Authorization: Bearer $token" \
-        -d "$payload"
-}
-
-gql_field() {
-    # Execute GraphQL and extract a specific jq path
-    local host="$1" port="$2" token="$3" query="$4" jq_path="$5" vars="${6:-"{}"}"
-    local result
-    result=$(gql "$host" "$port" "$token" "$query" "$vars")
-    echo "$result" | jq -r "$jq_path"
+# Generic RPC wrapper.  All subsequent functions call this.
+# Usage: ad4m_rpc HOST PORT TOKEN subcommand [args...]
+ad4m_rpc() {
+    local host="$1" port="$2" token="$3"
+    shift 3
+    python3 "$AD4M_RPC" --host "$host" --port "$port" --token "$token" "$@"
 }
 
 # ─── Executor lifecycle ─────────────────────────────────────────────────────
@@ -126,14 +131,11 @@ gql_field() {
 wait_executor() {
     local host="$1" port="$2" token="$3" timeout="${4:-30}"
     echo "  Waiting for executor at $host:$port..."
-    for i in $(seq 1 "$timeout"); do
-        if curl -sf "http://$host:$port/api/v1/agent/status" \
-            -H "Authorization: Bearer $token" >/dev/null 2>&1; then
-            echo "  Executor ready after ${i}s"
-            return 0
-        fi
-        sleep 1
-    done
+    local start=$SECONDS
+    if ad4m_rpc "$host" "$port" "$token" wait-ready --timeout "$timeout" > /dev/null 2>&1; then
+        echo "  Executor ready after $(( SECONDS - start ))s"
+        return 0
+    fi
     echo "  ERROR: Executor at $host:$port not ready after ${timeout}s" >&2
     return 1
 }
@@ -141,20 +143,19 @@ wait_executor() {
 init_agent() {
     local host="$1" port="$2" token="$3"
     echo "  Initializing agent on $host:$port..."
-    local status
-    status=$(gql_field "$host" "$port" "$token" \
-        'query { agentStatus { isInitialized did } }' \
-        '.data.agentStatus.isInitialized')
+    local result
+    result=$(ad4m_rpc "$host" "$port" "$token" agent-status 2>/dev/null) || true
 
-    if [[ "$status" == "true" ]]; then
+    local is_init
+    is_init=$(echo "$result" | jq -r '.isInitialized // false' 2>/dev/null) || is_init="false"
+
+    if [[ "$is_init" == "true" ]]; then
         echo "  Agent already initialized"
         return 0
     fi
 
-    gql "$host" "$port" "$token" \
-        'mutation { runtimeCreateUser(email: "dev@test.com", password: "test123") }' > /dev/null 2>&1 || true
-    gql "$host" "$port" "$token" \
-        'mutation { runtimeLoginUser(email: "dev@test.com", password: "test123") }' > /dev/null 2>&1 || true
+    # Generate a new agent identity
+    ad4m_rpc "$host" "$port" "$token" agent-generate > /dev/null 2>&1 || true
 
     echo "  Agent initialized"
 }
@@ -165,11 +166,26 @@ install_language() {
     local host="$1" port="$2" token="$3" lang_address="$4"
     echo "  Installing language $lang_address on $host..."
     local result
-    # shellcheck disable=SC2016
-    result=$(gql "$host" "$port" "$token" \
-        'mutation($addr: String!) { languageInstall(address: $addr) { address } }' \
-        "{\"addr\": \"$lang_address\"}")
-    echo "$result" | jq -r '.data.languageInstall.address // empty'
+    result=$(ad4m_rpc "$host" "$port" "$token" language-get "$lang_address" 2>/dev/null) || true
+    echo "$result" | jq -r '.address // empty' 2>/dev/null || true
+}
+
+publish_language() {
+    local host="$1" port="$2" token="$3" lang_path="$4" name="$5" description="$6"
+    local template_params="${7:-[]}" source_link="${8:-}"
+    echo "  Publishing language '$name' on $host..."
+    local result
+    result=$(ad4m_rpc "$host" "$port" "$token" language-publish \
+        "$lang_path" "$name" "$description" \
+        --possible-template-params "$template_params" \
+        ${source_link:+--source-code-link "$source_link"}) || return 1
+    echo "$result"
+}
+
+apply_language_template() {
+    local host="$1" port="$2" token="$3" source_hash="$4" template_data="$5"
+    echo "  Applying template for $source_hash on $host..."
+    ad4m_rpc "$host" "$port" "$token" language-apply-template "$source_hash" "$template_data"
 }
 
 # ─── Perspective operations ──────────────────────────────────────────────────
@@ -177,15 +193,14 @@ install_language() {
 create_perspective() {
     local host="$1" port="$2" token="$3" name="$4"
     echo "  Creating perspective '$name' on $host..."
-    gql_field "$host" "$port" "$token" \
-        "mutation { perspectiveAdd(name: \"$name\") { uuid } }" \
-        '.data.perspectiveAdd.uuid'
+    local result
+    result=$(ad4m_rpc "$host" "$port" "$token" perspective-create "$name")
+    echo "$result" | jq -r '.uuid // empty'
 }
 
 remove_perspective() {
     local host="$1" port="$2" token="$3" uuid="$4"
-    gql "$host" "$port" "$token" \
-        "mutation { perspectiveRemove(uuid: \"$uuid\") }" > /dev/null 2>&1 || true
+    ad4m_rpc "$host" "$port" "$token" perspective-remove "$uuid" > /dev/null 2>&1 || true
 }
 
 # ─── Neighbourhood operations ────────────────────────────────────────────────
@@ -193,45 +208,49 @@ remove_perspective() {
 create_neighbourhood() {
     local host="$1" port="$2" token="$3" perspective_uuid="$4" lang_address="$5"
     echo "  Creating neighbourhood on $host (perspective: $perspective_uuid)..."
-    gql_field "$host" "$port" "$token" \
-        "mutation { neighbourhoodCreate(perspectiveUuid: \"$perspective_uuid\", linkLanguage: \"$lang_address\", meta: { links: [] }) }" \
-        '.data.neighbourhoodCreate // empty'
+    local result
+    result=$(ad4m_rpc "$host" "$port" "$token" neighbourhood-publish "$perspective_uuid" "$lang_address")
+    # Result may be a string URL or an object with a url field — handle both
+    if echo "$result" | jq -e 'type == "string"' > /dev/null 2>&1; then
+        echo "$result" | jq -r '.'
+    else
+        echo "$result" | jq -r '.url // .neighbourhoodUrl // empty'
+    fi
 }
 
 join_neighbourhood() {
     local host="$1" port="$2" token="$3" neighbourhood_url="$4"
     echo "  Joining neighbourhood on $host..."
-    gql_field "$host" "$port" "$token" \
-        "mutation { neighbourhoodJoinFromUrl(url: \"$neighbourhood_url\") { uuid } }" \
-        '.data.neighbourhoodJoinFromUrl.uuid'
+    local result
+    result=$(ad4m_rpc "$host" "$port" "$token" neighbourhood-join "$neighbourhood_url")
+    # Result may be a string UUID or an object — handle both
+    if echo "$result" | jq -e 'type == "string"' > /dev/null 2>&1; then
+        echo "$result" | jq -r '.'
+    else
+        echo "$result" | jq -r '.uuid // empty'
+    fi
 }
 
 # ─── Link operations ─────────────────────────────────────────────────────────
 
 add_link() {
     local host="$1" port="$2" token="$3" uuid="$4" source="$5" predicate="$6" target="$7"
-    gql "$host" "$port" "$token" \
-        "mutation { perspectiveAddLink(uuid: \"$uuid\", link: { source: \"$source\", predicate: \"$predicate\", target: \"$target\" }) { author timestamp data { source predicate target } } }" \
-        > /dev/null
+    ad4m_rpc "$host" "$port" "$token" perspective-add-link "$uuid" "$source" "$target" "$predicate" > /dev/null
 }
 
 remove_link() {
     local host="$1" port="$2" token="$3" uuid="$4" source="$5" predicate="$6" target="$7"
-    gql "$host" "$port" "$token" \
-        "mutation { perspectiveRemoveLink(uuid: \"$uuid\", link: { source: \"$source\", predicate: \"$predicate\", target: \"$target\" }) }" \
-        > /dev/null
+    ad4m_rpc "$host" "$port" "$token" perspective-remove-link "$uuid" "$source" "$target" "$predicate" > /dev/null
 }
 
 get_links() {
     local host="$1" port="$2" token="$3" uuid="$4"
-    gql_field "$host" "$port" "$token" \
-        "query { perspective(uuid: \"$uuid\") { links { data { source predicate target } } } }" \
-        '.data.perspective.links'
+    ad4m_rpc "$host" "$port" "$token" perspective-query-links "$uuid"
 }
 
 count_links() {
     local host="$1" port="$2" token="$3" uuid="$4"
-    get_links "$host" "$port" "$token" "$uuid" | jq 'length'
+    get_links "$host" "$port" "$token" "$uuid" | jq 'if type == "array" then length else 0 end'
 }
 
 # ─── Assertions ──────────────────────────────────────────────────────────────
@@ -242,7 +261,9 @@ assert_link_exists() {
     links=$(get_links "$host" "$port" "$token" "$uuid")
     echo "$links" | jq -e \
         --arg s "$source" --arg p "$predicate" --arg t "$target" \
-        '[.[] | select(.data.source == $s and .data.predicate == $p and .data.target == $t)] | length > 0' \
+        'if type == "array" then
+            [.[] | .data // . | select(.source == $s and .predicate == $p and .target == $t)] | length > 0
+         else false end' \
         > /dev/null 2>&1
 }
 
@@ -252,7 +273,9 @@ assert_link_gone() {
     links=$(get_links "$host" "$port" "$token" "$uuid")
     echo "$links" | jq -e \
         --arg s "$source" --arg p "$predicate" --arg t "$target" \
-        '[.[] | select(.data.source == $s and .data.predicate == $p and .data.target == $t)] | length == 0' \
+        'if type == "array" then
+            [.[] | .data // . | select(.source == $s and .predicate == $p and .target == $t)] | length == 0
+         else true end' \
         > /dev/null 2>&1
 }
 
