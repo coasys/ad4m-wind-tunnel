@@ -1,265 +1,100 @@
-# AD4M Link Language Integration Tests
+# AD4M Link Language Test Suite
 
-Multi-device integration test harness that proves Perspective sync works between two separate AD4M executors running on different machines. Tests 8 link language protocols across LAN or Tailscale.
+End-to-end verification that [AD4M](https://ad4m.dev) link languages correctly bridge Perspectives to native protocol backends — proving data written in AD4M appears in each protocol's native apps, and vice versa.
 
-## What This Does
+## What Are Link Languages?
 
-For each Link Language under test:
+AD4M's core data unit is the **link triple** `(source, predicate, target)`. A **link language** is a protocol adapter that syncs these triples to an external backend — a Matrix room, a Nostr relay, an AT Proto PDS, an IPFS DAG, a Solid pod, or a Hypercore feed.
 
-1. Creates a **Neighbourhood** on Device A with that language
-2. **Joins** the Neighbourhood on Device B
-3. Writes links on A → verifies they appear on B (**A→B sync**)
-4. Writes links on B → verifies they appear on A (**B→A sync**)
-5. Removes a link on A → verifies it disappears from B (**removal sync**)
-6. Writes 10 links on A → verifies all appear on B (**batch sync**)
-7. Reports **pass/fail per test, per language**
+Each language is a self-contained bundle that runs inside the AD4M executor's sandboxed Deno runtime. It uses the [AD4M Language Development Kit (ALDK)](https://github.com/coasys/ad4m/tree/dev/ad4m-ldk) and communicates with its backend via `httpFetch` (HTTP) or native WebSocket.
 
-## Supported Languages
+## Link Languages
 
-| Protocol | Infrastructure | Docker Compose |
-|---|---|---|
-| **Holochain** | None (public bootstrap/signal) | — |
-| **ActivityPub** | None (executor built-in AP) | — |
-| **AT Protocol** | PDS server | `docker-compose.atproto.yml` |
-| **Nostr** | Relay (strfry) | `docker-compose.nostr.yml` |
-| **Matrix** | Homeserver (Conduit) | `docker-compose.matrix.yml` |
-| **Solid** | Pod server (CSS) | `docker-compose.solid.yml` |
-| **IPFS** | kubo daemon | `docker-compose.ipfs.yml` |
-| **Hypercore** | None (Hyperswarm DHT) | — |
+| Protocol | Repo | Transport | Native App |
+|----------|------|-----------|------------|
+| **Matrix** | [matrix-link-language](https://github.com/HexaField/matrix-link-language) | HTTP (Client-Server API) | [Element](https://app.element.io) |
+| **Nostr** | [nostr-link-language](https://github.com/HexaField/nostr-link-language) | Native WebSocket + BIP-340 Schnorr | [Snort](https://snort.social), [Iris](https://iris.to) |
+| **AT Protocol** | [atproto-link-language](https://github.com/HexaField/atproto-link-language) | HTTP (XRPC) | [Bluesky](https://bsky.app) |
+| **IPFS** | [ipfs-link-language](https://github.com/HexaField/ipfs-link-language) | HTTP (Kubo API) | [IPFS Desktop](https://docs.ipfs.tech/install/ipfs-desktop/) |
+| **Solid** | [solid-link-language](https://github.com/HexaField/solid-link-language) | HTTP (LDP) | [Penny](https://penny.vincenttunru.com/) |
+| **Hypercore** | [hypercore-link-language](https://github.com/HexaField/hypercore-link-language) | HTTP → sidecar gateway | [hyp CLI](https://docs.holepunch.to/) |
+| **ActivityPub** | [ap-link-language](https://github.com/HexaField/ap-link-language) | HTTP (AP federation) | [Mastodon](https://joinmastodon.org) |
+| **Holochain** | [ad4m/bootstrap-languages/p-diff-sync](https://github.com/coasys/ad4m/tree/dev/bootstrap-languages/p-diff-sync) | Holochain (built-in) | Flux |
 
-## Prerequisites
+**Starting a new language?** Use the [ad4m-link-language-template](https://github.com/HexaField/ad4m-link-language-template) — modern ALDK pattern with `defineLanguage()`, esbuild, pure/impure separation, and 20 passing tests out of the box.
 
-- **AD4M executor** built on both machines (Rust binary)
-- **SSH access** from your workstation to both machines (key-based, no password prompts)
-- **Docker** on the infrastructure host (for protocols that need it)
-- **jq** and **curl** installed locally and on both machines
-- **nc** (netcat) for WebSocket readiness checks
+## Basic Usage
 
-## Quick Start
+Every link language follows the same lifecycle:
+
+```
+1. Publish   →  language.publish(bundlePath, meta)
+2. Configure →  language.applyTemplate(hash, templateData)
+3. Create    →  perspective.create + neighbourhood.publish
+4. Use       →  perspective.addLink / perspective.queryLinks
+```
+
+**Publish** the bundle to the executor, **configure** it with template variables (server URLs, credentials, namespace IDs), attach it to a **Perspective** as a Neighbourhood, then **add links** — the language handles syncing to the backend.
+
+Template variables are protocol-specific. For example:
+
+| Language | Key Template Variables |
+|----------|----------------------|
+| Matrix | `MATRIX_HOMESERVER_URL`, `MATRIX_ROOM_ID`, `MATRIX_ACCESS_TOKEN` |
+| Nostr | `NOSTR_RELAY_URLS`, `NOSTR_PRIVKEY` |
+| AT Proto | `AT_PDS_URL`, `AT_HANDLE`, `AT_APP_PASSWORD` |
+| IPFS | `IPFS_API_URL` |
+| Solid | `SOLID_POD_URL`, `SOLID_CONTAINER_PATH` |
+| Hypercore | `HYPERCORE_GATEWAY_URL` |
+| ActivityPub | `GROUP_ACTOR_URL`, `GROUP_INBOX_URL`, `FEDERATION_DOMAIN` |
+
+## This Repository
+
+### `interop/` — Single-Device Backend Verification
+
+Proves each language correctly writes to and reads from its native backend. Runs against Docker services on a single machine.
 
 ```bash
-# 1. Configure
+cd interop
+./setup.sh          # Start all backend services
+./verify-matrix.sh  # Test Matrix
+./verify-nostr.sh   # Test Nostr
+# ... etc
+./teardown.sh       # Clean up
+```
+
+See [`interop/README.md`](interop/README.md) for full details, Docker Compose setup, and per-protocol notes.
+
+### `scripts/` — Multi-Device Sync Tests
+
+Proves Perspective sync works between two separate AD4M executors on different machines. Creates a Neighbourhood on Device A, joins on Device B, and verifies bidirectional link propagation.
+
+```bash
 cp config.example.env config.env
-vi config.env  # Set IPs, ports, language addresses
-
-# 2. Start executors on both machines
-./scripts/setup-executor.sh
-
-# 3. Run all tests
-./scripts/run-tests.sh
+# Edit config.env with your device IPs and language addresses
+./scripts/run-tests.sh              # Run all
+./scripts/run-tests.sh -l nostr     # Single language
 ```
-
-## Usage
-
-### Run all language tests
-
-```bash
-./scripts/run-tests.sh
-```
-
-### Run a single language
-
-```bash
-./scripts/run-tests.sh --language nostr
-./scripts/run-tests.sh -l holochain
-```
-
-### List available tests
-
-```bash
-./scripts/run-tests.sh --list
-```
-
-### Setup/teardown separately
-
-```bash
-# Start executors
-./scripts/setup-executor.sh          # Both devices
-./scripts/setup-executor.sh a        # Device A only
-
-# Start infrastructure for a protocol
-./scripts/setup-infra.sh nostr       # Single protocol
-./scripts/setup-infra.sh all         # All protocols
-
-# Stop everything
-./scripts/teardown.sh                # Executors + infra
-./scripts/teardown.sh --all          # + clean test data
-./scripts/teardown.sh --infra        # Infrastructure only
-```
-
-### Select which languages to test via config
-
-```bash
-# In config.env:
-LANGUAGES_TO_TEST=holochain,nostr    # Only these two
-LANGUAGES_TO_TEST=all                # All languages (default)
-```
-
-## Configuration
-
-Copy `config.example.env` to `config.env` and set:
-
-| Variable | Description |
-|---|---|
-| `DEVICE_A_HOST` | IP/hostname of Device A |
-| `DEVICE_A_USER` | SSH user for Device A |
-| `DEVICE_A_PORT` | AD4M executor port on Device A (default: 12000) |
-| `DEVICE_A_ADMIN` | Admin credential for Device A |
-| `DEVICE_B_HOST` / `_USER` / `_PORT` / `_ADMIN` | Same for Device B |
-| `EXECUTOR_BIN` | Path to ad4m-executor binary on both machines |
-| `EXECUTOR_DATA_DIR` | Data directory for test runs |
-| `SYNC_WAIT_SECONDS` | Max seconds to wait for sync (default: 10) |
-| `LANG_HOLOCHAIN` | Language address/hash for Holochain link language |
-| `LANG_NOSTR` | Language address/hash for Nostr link language |
-| ... | One `LANG_*` variable per protocol |
-
-Infrastructure URLs are optional — if not set, tests will use defaults based on `DEVICE_A_HOST`.
-
-## Per-Language Notes
-
-### Holochain
-- **Zero infrastructure** — uses public Holochain bootstrap and signal servers
-- May be slower to sync on first connection while DHT settles
-- Consider increasing `SYNC_WAIT_SECONDS` for Holochain tests
-
-### ActivityPub
-- Relies on the AD4M executor's built-in ActivityPub server
-- Both executors must be reachable from each other (no NAT issues)
-- Port visibility matters — both executor ports must be open bidirectionally
-
-### AT Protocol
-- Runs a self-hosted PDS (Personal Data Server)
-- The PDS docker-compose uses Bluesky's official image
-- Both devices connect to the same PDS instance
-
-### Nostr
-- Uses a strfry relay in Docker
-- Both devices publish/subscribe to the same relay
-- Very fast sync (sub-second) when relay is local
-
-### Matrix
-- Uses Conduit (lightweight Rust homeserver)
-- Both devices register accounts on the same homeserver
-- Federation is enabled but not required for same-server tests
-
-### Solid
-- Uses Community Solid Server (CSS)
-- Both devices access the same Solid pod server
-- Data is stored as Linked Data in the pod
-
-### IPFS
-- Uses kubo (go-ipfs) daemon
-- For true multi-device testing, run IPFS on both machines
-- Set `IPFS_API_B` to Device B's IPFS endpoint
-
-### Hypercore
-- **Zero infrastructure** — uses Hyperswarm DHT (fully P2P)
-- Discovery happens via DHT — both machines need outbound internet
-- May take longer for initial peer discovery
-
-## Test Results
-
-Results are written as JSON to `results/`:
-
-```
-results/holochain-20260502T123456.json
-results/nostr-20260502T123512.json
-```
-
-Each file contains:
-
-```json
-{
-  "language": "holochain",
-  "tests": [
-    {"name": "A→B sync", "status": "PASS", "message": "", "timestamp": "2026-05-02T02:34:56Z"},
-    {"name": "B→A sync", "status": "PASS", "message": "", "timestamp": "2026-05-02T02:35:06Z"},
-    {"name": "Removal sync", "status": "FAIL", "message": "Removed link still present...", "timestamp": "2026-05-02T02:35:16Z"},
-    {"name": "Batch sync (11 links)", "status": "PASS", "message": "", "timestamp": "2026-05-02T02:35:26Z"}
-  ],
-  "started": "2026-05-02T02:34:50Z",
-  "finished": "2026-05-02T02:35:30Z",
-  "passed": 3,
-  "failed": 1,
-  "skipped": 0
-}
-```
-
-## Adding a New Language
-
-1. Create `scripts/languages/test-<name>.sh`:
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/../common.sh"
-load_config
-
-# If infrastructure is needed:
-setup_my_infra() { start_infra "docker-compose.myproto.yml" ... }
-teardown_my_infra() { stop_infra "docker-compose.myproto.yml" ... }
-
-run_standard_tests "myprotocol" "${LANG_MYPROTOCOL:-}" setup_my_infra teardown_my_infra
-```
-
-2. Add a `LANG_MYPROTOCOL=` entry to `config.example.env`
-3. If infrastructure is needed, add `infra/docker-compose.myproto.yml`
-4. Add the language name to the `ALL_LANGUAGES` array in `scripts/run-tests.sh`
-5. Make it executable: `chmod +x scripts/languages/test-myprotocol.sh`
-6. Document in `INFRASTRUCTURE.md`
 
 ## Architecture
 
+All languages share the same internal architecture:
+
 ```
-┌──────────┐     SSH      ┌──────────────────────────┐
-│          │──────────────▶│ Device A (Ubuntu)        │
-│  Test    │              │  ad4m-executor :12000     │
-│  Runner  │              │  Docker infra (optional)  │
-│  (your   │              └──────────────────────────┘
-│  machine)│                        │
-│          │     SSH      ┌──────────────────────────┐
-│          │──────────────▶│ Device B (Ubuntu)        │
-│          │              │  ad4m-executor :12000     │
-└──────────┘              └──────────────────────────┘
-                                    │
-                          ┌─────────┴─────────┐
-                          │   Neighbourhood    │
-                          │   (Link Language)  │
-                          │   syncs between    │
-                          │   Device A ↔ B     │
-                          └───────────────────┘
+index.ts                    ← defineLanguage() entry point
+src/
+├── types.ts                ← Shared types (pure)
+├── store.ts                ← Link store + indexed queries (pure)
+├── transport.ts            ← Transport interface + singleton
+├── transport-deno.ts       ← httpFetch wrapper (Deno adapter)
+├── storage-interface.ts    ← Storage interface + singleton
+├── storage-deno.ts         ← storageGet/Put/Delete (Deno adapter)
+├── sync.ts                 ← Protocol-specific sync logic
+├── *.pure.ts               ← Pure modules (no runtime imports)
+└── *-deno.ts               ← Deno/executor adapters only
 ```
 
-The test runner:
-1. Connects to both machines via SSH
-2. Starts AD4M executors (if using `setup-executor.sh`)
-3. Starts required infrastructure (Docker containers)
-4. Communicates with executors via GraphQL over HTTP
-5. Creates neighbourhoods, writes links, asserts sync
-6. Tears down everything on completion
-
-## Troubleshooting
-
-### Executor won't start
-- Check `~/ad4m-test-data/executor.log` on the remote machine
-- Ensure the binary is built: `cargo build --release` in the AD4M repo
-- Verify the port isn't already in use
-
-### SSH connection refused
-- Ensure key-based SSH is configured (no password prompts)
-- Check `StrictHostKeyChecking` isn't blocking new hosts
-- For Tailscale: ensure both machines are on the same tailnet
-
-### Sync timeout
-- Increase `SYNC_WAIT_SECONDS` in config
-- Check that both executors can reach each other's network
-- For Holochain/Hypercore: initial DHT discovery takes time
-
-### Infrastructure won't start
-- Ensure Docker is installed and running on the target machine
-- Check Docker Compose v2 is available (`docker compose version`)
-- Review container logs: `docker logs ad4m-test-<container>`
+**Pure/impure boundary**: `.pure.ts` files import only from other `.pure.ts`, `types.ts`, or external packages. Adapter files (`*-deno.ts`) are the only place `ad4m:host` imports appear.
 
 ## License
 

@@ -311,12 +311,27 @@ interop/
 ├── verify-solid.sh           # Solid ↔ AD4M test
 ├── verify-ipfs.sh            # IPFS ↔ AD4M test
 ├── verify-nostr.sh           # Nostr ↔ AD4M test
-└── verify-hypercore.sh       # Hypercore ↔ AD4M test
+├── verify-hypercore.sh       # Hypercore ↔ AD4M test
+└── verify-activitypub.sh     # ActivityPub ↔ AD4M test
 ```
+
+## Language Repos
+
+| Protocol | Repo | Verify Script |
+|----------|------|---------------|
+| Matrix | [matrix-link-language](https://github.com/HexaField/matrix-link-language) | `verify-matrix.sh` |
+| Nostr | [nostr-link-language](https://github.com/HexaField/nostr-link-language) | `verify-nostr.sh` |
+| AT Protocol | [atproto-link-language](https://github.com/HexaField/atproto-link-language) | `verify-atproto.sh` |
+| IPFS | [ipfs-link-language](https://github.com/HexaField/ipfs-link-language) | `verify-ipfs.sh` |
+| Solid | [solid-link-language](https://github.com/HexaField/solid-link-language) | `verify-solid.sh` |
+| Hypercore | [hypercore-link-language](https://github.com/HexaField/hypercore-link-language) | `verify-hypercore.sh` |
+| ActivityPub | [ap-link-language](https://github.com/HexaField/ap-link-language) | `verify-activitypub.sh` |
+| Holochain | [ad4m/bootstrap-languages/p-diff-sync](https://github.com/coasys/ad4m/tree/dev/bootstrap-languages/p-diff-sync) | (multi-device only) |
+
+New language? Start from the [ad4m-link-language-template](https://github.com/HexaField/ad4m-link-language-template).
 
 ## Related
 
-- Main test suite: `../scripts/common.sh` (multi-device sync tests)
-- Infrastructure: `../infra/` (per-protocol Docker Compose files)
-- RPC client: `../scripts/ad4m-rpc.py` (WebSocket RPC wrapper)
-- Language source: `../scripts/languages/` (link language implementations)
+- Top-level README: [`../README.md`](../README.md) — overview, basic usage, architecture
+- Multi-device sync tests: `../scripts/` — two-executor bidirectional sync
+- RPC client: `../scripts/ad4m-rpc.py` — WebSocket RPC wrapper
