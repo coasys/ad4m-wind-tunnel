@@ -1,0 +1,135 @@
+# AD4M Link Language Interop — Docker Compose
+# All backend services for interop testing on Device A (YOUR_DEVICE_IP)
+# Usage: docker compose -f docker-compose.yml up -d
+#
+# Note: Conduit (Matrix) and nostr-rs-relay may already be running.
+#       Docker Compose will skip containers that are already up.
+
+networks:
+  ad4m-interop:
+    driver: bridge
+    name: ad4m-interop
+
+services:
+
+  # ─── Matrix — Conduit (port 6167) ─────────────────────────────────────────
+  matrix-conduit:
+    image: matrixconduit/matrix-conduit:latest
+    container_name: ad4m-interop-matrix
+    ports:
+      - "6167:6167"
+    volumes:
+      - conduit-data:/var/lib/matrix-conduit
+    environment:
+      CONDUIT_SERVER_NAME: "ad4m-test.local"
+      CONDUIT_PORT: "6167"
+      CONDUIT_DATABASE_BACKEND: "rocksdb"
+      CONDUIT_ALLOW_REGISTRATION: "true"
+      CONDUIT_ALLOW_FEDERATION: "false"
+      CONDUIT_ADDRESS: "0.0.0.0"
+    networks:
+      - ad4m-interop
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:6167/_matrix/client/versions"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ─── AT Protocol — PDS (port 2583) ────────────────────────────────────────
+  atproto-pds:
+    image: ghcr.io/bluesky-social/pds:latest
+    container_name: ad4m-interop-atproto
+    ports:
+      - "2583:2583"
+    volumes:
+      - pds-data:/pds
+    environment:
+      PDS_HOSTNAME: "localhost"
+      PDS_PORT: "2583"
+      PDS_DATA_DIRECTORY: "/pds"
+      PDS_BLOBSTORE_DISK_LOCATION: "/pds/blocks"
+      PDS_JWT_SECRET: "ad4m-test-jwt-secret-not-for-production"
+      PDS_ADMIN_PASSWORD: "ad4m-test-admin"
+      PDS_PLC_ROTATION_KEY_K256_PRIVATE_KEY_HEX: ""
+      PDS_DID_PLC_URL: "https://plc.directory"
+      PDS_INVITE_REQUIRED: "false"
+      PDS_EMAIL_SMTP_URL: ""
+      PDS_EMAIL_FROM_ADDRESS: "noreply@test.local"
+    networks:
+      - ad4m-interop
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:2583/xrpc/_health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ─── Solid — Community Solid Server (port 3000) ───────────────────────────
+  solid-server:
+    image: solidproject/community-server:latest
+    container_name: ad4m-interop-solid
+    ports:
+      - "3000:3000"
+    volumes:
+      - solid-data:/data
+    command: >
+      -p 3000
+      -b http://localhost:3000
+      --seededPodConfigJson /dev/null
+    networks:
+      - ad4m-interop
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3000/"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ─── IPFS — Kubo (ports 5001, 8080) ───────────────────────────────────────
+  ipfs-node:
+    image: ipfs/kubo:latest
+    container_name: ad4m-interop-ipfs
+    ports:
+      - "5001:5001"
+      - "4001:4001"
+      - "4001:4001/udp"
+      - "8080:8080"
+    volumes:
+      - ipfs-data:/data/ipfs
+    environment:
+      IPFS_PROFILE: server
+    networks:
+      - ad4m-interop
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "ipfs id || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ─── Nostr — nostr-rs-relay (port 7777) ───────────────────────────────────
+  nostr-relay:
+    image: scsibug/nostr-rs-relay:latest
+    container_name: ad4m-interop-nostr
+    ports:
+      - "7777:8080"
+    volumes:
+      - nostr-data:/usr/src/app/db
+    environment:
+      RELAY_PORT: "8080"
+    networks:
+      - ad4m-interop
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "8080"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  conduit-data:
+  pds-data:
+  solid-data:
+  ipfs-data:
+  nostr-data:
