@@ -76,7 +76,7 @@ What each language implements from the AD4M Language Interface.
 | **perspective-sync** | ✅ (gossip) | ✅ (timeline poll) | ✅ (REQ filter) | ✅ (repo list) | ✅ (IPNS resolve) | ✅ (container list) | ✅ (feed poll) | ✅ (outbox poll) |
 | **perspective-query** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **peers** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **telepresence** | ✅ (native DHT) | ✅ (Presence API) | ✅ (ephemeral events) | ❌ | ❌ | ❌ | ✅ (Hyperswarm peers) | ❌ |
+| **telepresence** | ✅ (native DHT) | ✅ (Presence API) | ✅ (ephemeral events) | ❌ | ✅ (PubSub) | ❌ | ✅ (Hyperswarm peers) | ❌ |
 | **interactions** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **dual-language** | N/A (primary) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **sync modes** | Bidirectional | Bi / Pub / Sub | Bi / Pub / Sub | Bi / Pub / Sub | Bi / Pub / Sub | Bi / Pub / Sub | Bi / Pub / Sub | Bi / Pub / Sub |
@@ -155,7 +155,7 @@ How each language relates to the broader protocol ecosystem.
 | If you need... | Use |
 |---|---|
 | Fully P2P, no infrastructure | **Holochain** or **Hypercore** |
-| Real-time telepresence (presence, signals) | **Holochain**, **Matrix**, **Nostr**, or **Hypercore** |
+| Real-time telepresence (presence, signals) | **Holochain**, **Matrix**, **Nostr**, **IPFS**, or **Hypercore** |
 | Human-readable data in native apps | **Matrix**, **Solid**, or **ActivityPub** |
 | Sovereign identity (no server authority) | **Holochain**, **Nostr**, **IPFS**, or **Hypercore** |
 | End-to-end encryption | **Matrix** (Olm/Megolm) or **Hypercore** (symmetric key) |
