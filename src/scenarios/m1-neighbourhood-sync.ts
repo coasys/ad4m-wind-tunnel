@@ -5,7 +5,7 @@
  */
 
 import { Scenario, ScenarioContext, ScenarioResult } from "../scenario.js";
-import { InstrumentedClient } from "../client.js";
+import { InstrumentedClient, Transport } from "../client.js";
 import { sleep } from "../executor.js";
 
 export const m1NeighbourhoodSync: Scenario = {
@@ -21,7 +21,7 @@ export const m1NeighbourhoodSync: Scenario = {
     // M1 requires a second executor on port+1
     // The runner should have started a second executor
     const port2 = port + 1;
-    const transport = ctx.client["config"].transport;
+    const transport = ctx.client.config.transport;
 
     const client2 = new InstrumentedClient({
       port: port2,

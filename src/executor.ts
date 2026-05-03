@@ -6,6 +6,7 @@
 import { spawn, ChildProcess, execSync } from "child_process";
 import { mkdirSync, existsSync, writeFileSync, rmSync } from "fs";
 import { join } from "path";
+import { Transport } from "./client.js";
 
 export interface ExecutorConfig {
   branch: string;
@@ -13,7 +14,8 @@ export interface ExecutorConfig {
   dataPath: string;
   adminToken: string;
   adamRepoPath: string;
-  buildDir: string; // where to clone/build
+  buildDir: string;
+  transport: Transport;
 }
 
 export interface ExecutorInstance {
@@ -29,7 +31,6 @@ export async function buildExecutor(config: ExecutorConfig): Promise<string> {
 
   console.log(`[executor] Building branch: ${branch} in ${buildDir}`);
 
-  // Create shallow clone for this branch
   if (existsSync(buildDir)) {
     rmSync(buildDir, { recursive: true, force: true });
   }
@@ -46,35 +47,21 @@ export async function buildExecutor(config: ExecutorConfig): Promise<string> {
     writeFileSync(join(dappDir, "index.html"), "<!DOCTYPE html><html><body></body></html>");
   }
 
-  // Copy CUSTOM_DENO_SNAPSHOT.bin from source repo if it exists
+  // Copy CUSTOM_DENO_SNAPSHOT.bin
   const snapshotSrc = join(adamRepoPath, "CUSTOM_DENO_SNAPSHOT.bin");
-  const snapshotDst = join(buildDir, "CUSTOM_DENO_SNAPSHOT.bin");
-  const snapshotLink = join(buildDir, "rust-executor", "CUSTOM_DENO_SNAPSHOT.bin");
-  
   if (existsSync(snapshotSrc)) {
     console.log(`[executor] Copying CUSTOM_DENO_SNAPSHOT.bin...`);
-    execSync(`cp "${snapshotSrc}" "${snapshotDst}"`, { stdio: "pipe" });
-    // Ensure the symlink in rust-executor points to it
-    try {
-      execSync(`rm -f "${snapshotLink}" && ln -s "${snapshotDst}" "${snapshotLink}"`, { stdio: "pipe" });
-    } catch {}
-  } else {
-    // Generate Deno snapshot
-    console.log(`[executor] Generating Deno snapshot for ${branch}...`);
-    try {
-      execSync("cargo build --release --bin generate_snapshot 2>&1", {
-        cwd: buildDir,
-        stdio: "pipe",
-        timeout: 900000, // 15 min
-      });
-      execSync("cargo run --release --bin generate_snapshot 2>&1", {
-        cwd: buildDir,
-        stdio: "pipe",
-        timeout: 300000, // 5 min
-      });
-    } catch (err: any) {
-      console.log(`[executor] Snapshot generation failed: ${err.message?.slice(0, 200)}`);
-    }
+    // Put in both root and rust-executor/ to cover both include_bytes paths
+    execSync(`cp "${snapshotSrc}" "${join(buildDir, "CUSTOM_DENO_SNAPSHOT.bin")}"`, { stdio: "pipe" });
+    execSync(`cp "${snapshotSrc}" "${join(buildDir, "rust-executor", "CUSTOM_DENO_SNAPSHOT.bin")}"`, { stdio: "pipe" });
+  }
+
+  // Copy schema.gql if needed
+  const schemaSrc = join(adamRepoPath, "core", "lib", "src", "schema.gql");
+  if (existsSync(schemaSrc)) {
+    const schemaTarget = join(buildDir, "core", "lib", "src");
+    mkdirSync(schemaTarget, { recursive: true });
+    execSync(`cp "${schemaSrc}" "${join(schemaTarget, "schema.gql")}"`, { stdio: "pipe" });
   }
 
   // Build the executor
@@ -94,15 +81,27 @@ export async function buildExecutor(config: ExecutorConfig): Promise<string> {
   return binaryPath;
 }
 
+export async function initExecutor(binaryPath: string, dataPath: string): Promise<void> {
+  // Clean data directory
+  if (existsSync(dataPath)) {
+    rmSync(dataPath, { recursive: true, force: true });
+  }
+  mkdirSync(dataPath, { recursive: true });
+
+  // Run init
+  console.log(`[executor] Initializing data at ${dataPath}...`);
+  execSync(`"${binaryPath}" init --data-path "${dataPath}" 2>&1`, {
+    stdio: "pipe",
+    timeout: 30000,
+  });
+}
+
 export async function startExecutor(
   binaryPath: string,
   config: ExecutorConfig
 ): Promise<ChildProcess> {
-  // Clean data directory
-  if (existsSync(config.dataPath)) {
-    rmSync(config.dataPath, { recursive: true, force: true });
-  }
-  mkdirSync(config.dataPath, { recursive: true });
+  // Initialize if needed
+  await initExecutor(binaryPath, config.dataPath);
 
   console.log(`[executor] Starting on port ${config.port}, data: ${config.dataPath}`);
 
@@ -111,10 +110,8 @@ export async function startExecutor(
     "--app-data-path", config.dataPath,
     "--gql-port", String(config.port),
     "--admin-credential", config.adminToken,
-    "--enable-multi-user", "true",
     "--run-dapp-server", "false",
     "--hc-use-bootstrap", "false",
-    "--hc-use-mdns", "true",
     "--hc-use-proxy", "false",
   ], {
     stdio: ["pipe", "pipe", "pipe"],
@@ -123,11 +120,11 @@ export async function startExecutor(
 
   proc.stdout?.on("data", (d) => {
     const line = d.toString().trim();
-    if (line) console.log(`[executor:${config.port}:stdout] ${line}`);
+    if (line && process.env.VERBOSE) console.log(`[exec:${config.port}:out] ${line}`);
   });
   proc.stderr?.on("data", (d) => {
     const line = d.toString().trim();
-    if (line) console.log(`[executor:${config.port}:stderr] ${line}`);
+    if (line && process.env.VERBOSE) console.log(`[exec:${config.port}:err] ${line}`);
   });
 
   return proc;
@@ -135,14 +132,21 @@ export async function startExecutor(
 
 export async function waitForHealth(
   port: number,
+  transport: Transport,
   timeoutMs: number = 60000
 ): Promise<number> {
   const start = performance.now();
   const deadline = start + timeoutMs;
 
-  while (Date.now() < deadline) {
+  // GraphQL branches: GET / returns 200
+  // REST branches: GET /health returns JSON
+  const healthUrl = transport === "graphql"
+    ? `http://127.0.0.1:${port}/`
+    : `http://127.0.0.1:${port}/health`;
+
+  while (performance.now() < deadline) {
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/health`);
+      const res = await fetch(healthUrl);
       if (res.ok) {
         return performance.now() - start;
       }
