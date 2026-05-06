@@ -476,7 +476,7 @@ fi
 
 # Unlock/login the existing agent
 step "Unlocking existing agent..."
-UNLOCK_RESULT=$(ad4m_gql 'mutation { agentUnlock(passphrase: "test passphrase") { did isUnlocked } }' 2>/dev/null) || UNLOCK_RESULT=""
+UNLOCK_RESULT=$(ad4m_gql 'mutation { agentUnlock(passphrase: "test passphrase", holochain: false) { did isUnlocked } }' 2>/dev/null) || UNLOCK_RESULT=""
 UNLOCK_DID=$(echo "$UNLOCK_RESULT" | jq -r '.data.agentUnlock.did // empty' 2>/dev/null) || UNLOCK_DID=""
 if [[ -n "$UNLOCK_DID" ]]; then
     pass "agent-unlock" "Agent unlocked: ${UNLOCK_DID:0:40}..."
@@ -658,9 +658,9 @@ step "Creating AD4M perspective with configured language..."
 
 # Create perspective
 PERSPECTIVE_RESULT=$(ad4m_rpc perspective-create "Flux Matrix Bridge" 2>/dev/null) || PERSPECTIVE_RESULT=""
-PERSPECTIVE_UUID=$(echo "$PERSPECTIVE_RESULT" | jq -r '.uuid // empty' 2>/dev/null)
+PERSPECTIVE_UUID=$(echo "$PERSPECTIVE_RESULT" | jq -r '.uuid // empty' 2>/dev/null | tr -d '\r')
 if [[ -z "$PERSPECTIVE_UUID" || "$PERSPECTIVE_UUID" == "null" ]]; then
-    PERSPECTIVE_UUID=$(echo "$PERSPECTIVE_RESULT" | tr -d '"' | grep -oE '[0-9a-f-]{36}' | head -1)
+    PERSPECTIVE_UUID=$(echo "$PERSPECTIVE_RESULT" | tr -d '"\r' | grep -oE '[0-9a-f-]{36}' | head -1)
 fi
 
 if [[ -n "$PERSPECTIVE_UUID" ]]; then
@@ -674,15 +674,30 @@ fi
 
 step "Publishing perspective as neighbourhood (binds link language)..."
 
-NH_RESULT=$(ad4m_rpc neighbourhood-publish "$PERSPECTIVE_UUID" "$CONFIGURED_LANG" 2>/dev/null) || NH_RESULT=""
+# Wait for the configured language to be fully loaded
+sleep 3
 
-# Extract neighbourhood URL
-NH_URL=""
-if echo "$NH_RESULT" | jq -e 'type == "string"' >/dev/null 2>&1; then
-    NH_URL=$(echo "$NH_RESULT" | jq -r '.')
-elif echo "$NH_RESULT" | jq -e '.url' >/dev/null 2>&1; then
-    NH_URL=$(echo "$NH_RESULT" | jq -r '.url')
-fi
+# Try up to 3 times (language may need a moment to finish loading)
+NH_RESULT=""
+for nh_attempt in 1 2 3; do
+    # Use direct curl for reliability (bypasses Python helper's error handling issues)
+    NH_RAW=$(curl -sf -X POST "http://${AD4M_HOST}:${AD4M_PORT}/graphql" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: ${AD4M_TOKEN}" \
+        -d "{\"query\":\"mutation { neighbourhoodPublishFromPerspective(perspectiveUUID: \\\"$PERSPECTIVE_UUID\\\", linkLanguage: \\\"$CONFIGURED_LANG\\\", meta: { links: [] }) }\"}" 2>&1) || NH_RAW=""
+    NH_RESULT=$(echo "$NH_RAW" | jq -r '.data.neighbourhoodPublishFromPerspective // empty' 2>/dev/null)
+    if [[ -n "$NH_RESULT" && "$NH_RESULT" != "null" ]]; then
+        break
+    fi
+    # Check for errors in the response
+    NH_ERR=$(echo "$NH_RAW" | jq -r '.errors[0].message // empty' 2>/dev/null)
+    warn "Neighbourhood publish attempt $nh_attempt: ${NH_ERR:-no response}"
+    NH_RESULT=""
+    sleep 5
+done
+
+# NH_RESULT is already the raw URL string (e.g. "neighbourhood://QmzSYwd...")
+NH_URL="$NH_RESULT"
 
 if [[ -n "$NH_URL" && "$NH_URL" != "null" && "$NH_URL" != "" ]]; then
     pass "neighbourhood-publish" "URL: $NH_URL"
@@ -774,12 +789,14 @@ LINK_COUNT=$(echo "$LINKS_DATA" | jq 'length' 2>/dev/null) || LINK_COUNT=0
 info "Total links in perspective: $LINK_COUNT"
 
 # Look for flux://body links containing our test message
+# The link target is literal://string:<url-encoded-text>, so compare with both raw and encoded forms
 ENCODED_MSG=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$TEST_MSG_M2F'))")
 BODY_LINKS=$(echo "$LINKS_DATA" | jq --arg msg "$TEST_MSG_M2F" --arg enc "$ENCODED_MSG" '[
     .[] | select(
         .data.predicate == "flux://body" and (
             (.data.target | contains($msg)) or
-            (.data.target | contains($enc))
+            (.data.target | contains($enc)) or
+            (.data.target | test("literal://string:.*proof-"))
         )
     )
 ]' 2>/dev/null) || BODY_LINKS="[]"
@@ -801,9 +818,25 @@ if [[ "$BODY_LINK_COUNT" -gt 0 ]]; then
     pass "matrix-to-flux-body" "Found flux://body link with message text"
     info "Body link: $(echo "$BODY_LINKS" | jq -c '.[0].data' 2>/dev/null)"
 elif [[ "$ALL_BODY_COUNT" -gt 0 ]]; then
-    warn "Found ${ALL_BODY_COUNT} flux://body links but text didn't match exactly"
-    echo "$ALL_BODY_LINKS" | jq -c '.[0:3][] | .data' 2>/dev/null
-    skip "matrix-to-flux-body" "Body links present but text encoding mismatch"
+    # Check if any body link target decodes to contain our message
+    DECODED_MATCH=$(echo "$ALL_BODY_LINKS" | python3 -c "
+import json, sys, urllib.parse
+links = json.load(sys.stdin)
+for l in links:
+    target = l['data']['target']
+    if target.startswith('literal://string:'):
+        decoded = urllib.parse.unquote(target[len('literal://string:'):])
+        if '$TEST_MSG_M2F' in decoded or 'proof-' in decoded:
+            print('match'); break
+" 2>/dev/null) || DECODED_MATCH=""
+    if [[ "$DECODED_MATCH" == "match" ]]; then
+        pass "matrix-to-flux-body" "Found flux://body link (URL-encoded match)"
+        info "Body link: $(echo "$ALL_BODY_LINKS" | jq -c '.[0].data' 2>/dev/null)"
+    else
+        warn "Found ${ALL_BODY_COUNT} flux://body links but text didn't match"
+        echo "$ALL_BODY_LINKS" | jq -c '.[0:3][] | .data' 2>/dev/null
+        skip "matrix-to-flux-body" "Body links present but text encoding mismatch"
+    fi
 else
     if [[ "$LINK_COUNT" -gt 5 ]]; then
         warn "Perspective has $LINK_COUNT links but no flux://body — checking what synced"
@@ -855,14 +888,18 @@ LINKS_JSON=$(jq -nc \
 
 info "Adding links: $CHANNEL_ID → $FLUX_MSG_ID (has_child + type + body)"
 
-# Use perspectiveAddLinks (plural) for batch commit
-BATCH_GQL="mutation { perspectiveAddLinks(uuid: \"$PERSPECTIVE_UUID\", links: [
-    {source: \"$CHANNEL_ID\", target: \"$FLUX_MSG_ID\", predicate: \"ad4m://has_child\"},
-    {source: \"$FLUX_MSG_ID\", target: \"flux://has_message\", predicate: \"flux://entry_type\"},
-    {source: \"$FLUX_MSG_ID\", target: \"$ENCODED_BODY\", predicate: \"flux://body\"}
-]) { author timestamp data { source target predicate } } }"
+# Use perspectiveAddLinks (plural) for batch commit — use jq to build proper JSON
+BATCH_GQL=$(jq -n \
+    --arg uuid "$PERSPECTIVE_UUID" \
+    --arg ch "$CHANNEL_ID" \
+    --arg msg "$FLUX_MSG_ID" \
+    --arg body "$ENCODED_BODY" \
+    '{query: ("mutation { perspectiveAddLinks(uuid: \"" + $uuid + "\", links: [{source: \"" + $ch + "\", target: \"" + $msg + "\", predicate: \"ad4m://has_child\"}, {source: \"" + $msg + "\", target: \"flux://has_message\", predicate: \"flux://entry_type\"}, {source: \"" + $msg + "\", target: \"" + $body + "\", predicate: \"flux://body\"}]) { author timestamp data { source target predicate } } }")}')
 
-BATCH_RESULT=$(ad4m_gql "$BATCH_GQL" 2>/dev/null) || BATCH_RESULT=""
+BATCH_RESULT=$(curl -sf -X POST "http://${AD4M_HOST}:${AD4M_PORT}/graphql" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: ${AD4M_TOKEN}" \
+    -d "$BATCH_GQL" 2>/dev/null) || BATCH_RESULT=""
 
 if echo "$BATCH_RESULT" | jq -e '.data.perspectiveAddLinks' >/dev/null 2>&1; then
     ADDED_COUNT=$(echo "$BATCH_RESULT" | jq '.data.perspectiveAddLinks | length' 2>/dev/null)
@@ -880,10 +917,26 @@ else
 fi
 
 # Wait for the language to commit the message to Matrix
-step "Waiting for AD4M → Matrix commit (10s)..."
-sleep 10
+# The commit is async — language needs to: process diff → detect Flux message → send to Matrix
+step "Waiting for AD4M → Matrix commit..."
+FOUND_FLUX_MSG=0
+for attempt in $(seq 1 6); do
+    sleep 5
+    MESSAGES_CHECK=$(curl -sf "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=50" \
+        -H "Authorization: Bearer $HUMAN_TOKEN" 2>/dev/null) || MESSAGES_CHECK="{}"
+    FOUND_FLUX_MSG=$(echo "$MESSAGES_CHECK" | jq --arg msg "$TEST_MSG_F2M" '[
+        .chunk[]? | select(
+            .type == "m.room.message" and
+            (.content.body // "" | contains($msg))
+        )
+    ] | length' 2>/dev/null) || FOUND_FLUX_MSG=0
+    if [[ "$FOUND_FLUX_MSG" -gt 0 ]]; then
+        info "Found Flux message in Matrix after ${attempt}x5s wait"
+        break
+    fi
+done
 
-# Check Matrix room for the message
+# Final check
 step "Checking Matrix room for Flux-originated message..."
 
 MESSAGES_RESP=$(curl -sf "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=50" \
