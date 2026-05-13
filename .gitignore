@@ -3,4 +3,3 @@ dist/
 *.log
 .env
 results/
-_results/
