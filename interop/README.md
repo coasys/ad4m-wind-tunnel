@@ -45,6 +45,7 @@ for f in verify-*.sh; do ./$f; echo ""; done
   - 5001, 8080 (IPFS/Kubo)
   - 7777 (Nostr relay)
   - 7778 (Hypercore Gateway)
+  - 7779 (NextGraph Gateway)
 
 ## Architecture
 
@@ -59,6 +60,7 @@ for f in verify-*.sh; do ./$f; echo ""; done
 │                          │    HTTP :5001,:8080       │  IPFS (Kubo)             │
 │                          │    WS  :7777              │  Nostr Relay             │
 │                          │    HTTP :7778             │  Hypercore Gateway       │
+│                          │    HTTP :7779             │  NextGraph Gateway       │
 └──────────────────────────┘                          └──────────────────────────┘
 ```
 
@@ -151,6 +153,20 @@ Every verification script follows the same 10-step pattern:
 **Interop proof:** AD4M writes links → kind:30078 events appear on relay → Nostr client shows app data. Event published via WebSocket → AD4M sync picks it up.
 
 The Nostr language uses native Deno WebSocket connections to relays (not `httpFetch`) and BIP-340 Schnorr signing via `@noble/curves`.
+
+### NextGraph
+
+| Item            | Value                                      |
+|-----------------|--------------------------------------------||
+| Service         | Custom Node.js gateway (NOT Docker)        |
+| Port            | 7779                                        |
+| Language        | (pending — alpha)                          |
+| Data format     | RDF Triples (SPARQL)                       |
+| Native app      | NextGraph apps                             |
+
+**Interop proof:** AD4M writes links → SPARQL triples stored in NextGraph wallet/store, queryable via gateway API. Triples written via gateway → AD4M sync picks them up.
+
+The NextGraph language communicates with a sidecar gateway via `httpFetch`. The gateway wraps the `@ng-org/nextgraph` WASM SDK, handling wallet management, SPARQL operations, and CRDT-based synchronization. This follows the same sidecar pattern as Hypercore.
 
 ### Hypercore
 
@@ -312,7 +328,8 @@ interop/
 ├── verify-ipfs.sh            # IPFS ↔ AD4M test
 ├── verify-nostr.sh           # Nostr ↔ AD4M test
 ├── verify-hypercore.sh       # Hypercore ↔ AD4M test
-└── verify-activitypub.sh     # ActivityPub ↔ AD4M test
+├── verify-activitypub.sh     # ActivityPub ↔ AD4M test
+└── verify-nextgraph.sh       # NextGraph ↔ AD4M test
 ```
 
 ## Language Repos
@@ -326,6 +343,7 @@ interop/
 | Solid | [solid-link-language](https://github.com/HexaField/solid-link-language) | `verify-solid.sh` |
 | Hypercore | [hypercore-link-language](https://github.com/HexaField/hypercore-link-language) | `verify-hypercore.sh` |
 | ActivityPub | [ap-link-language](https://github.com/HexaField/ap-link-language) | `verify-activitypub.sh` |
+| NextGraph | [nextgraph-link-language](https://github.com/HexaField/nextgraph-link-language) | `verify-nextgraph.sh` |
 | Holochain | [ad4m/bootstrap-languages/p-diff-sync](https://github.com/coasys/ad4m/tree/dev/bootstrap-languages/p-diff-sync) | (multi-device only) |
 
 New language? Start from the [ad4m-link-language-template](https://github.com/HexaField/ad4m-link-language-template).
