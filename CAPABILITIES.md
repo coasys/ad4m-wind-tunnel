@@ -124,7 +124,7 @@ How links are represented in each protocol's native format.
 | **Append-only** | ✅ (DHT) | ❌ | Partial (replaceable events) | ❌ | ✅ | ❌ | ✅ | ❌ | ❌ (CRDT) |
 | **Merkle structure** | ✅ (DHT) | ❌ | ❌ | ✅ (MST) | ✅ (DAG) | ❌ | ✅ (Merkle tree) | ❌ | ✅ (DAG) |
 | **Human-readable** | ❌ | ✅ (dual render) | ❌ (app data) | ❌ (structured record) | ❌ (DAG-JSON) | ✅ (RDF/Turtle) | ❌ | ✅ (Note content) | ❌ (SPARQL/RDF) |
-| **Native app visibility** | Flux only | Element, other Matrix clients | Nostr clients (raw app data) | Bluesky (custom collection) | IPFS Gateway / Desktop | Penny, Mashlib, any Solid app | hyp CLI | Mastodon, Pleroma, Misskey | NextGraph apps |
+| **Native app visibility** | N/A | Element, other Matrix clients | Nostr clients (raw app data) | Bluesky (custom collection) | IPFS Gateway / Desktop | Penny, Mashlib, any Solid app | hyp CLI | Mastodon, Pleroma, Misskey | NextGraph apps |
 
 ---
 
