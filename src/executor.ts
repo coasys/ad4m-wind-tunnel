@@ -6,7 +6,6 @@
 import { spawn, ChildProcess, execSync } from "child_process";
 import { mkdirSync, existsSync, writeFileSync, rmSync } from "fs";
 import { join } from "path";
-import { Transport } from "./client.js";
 import WebSocket from "ws";
 
 export interface ExecutorConfig {
@@ -16,7 +15,6 @@ export interface ExecutorConfig {
   adminToken: string;
   adamRepoPath: string;
   buildDir: string;
-  transport: Transport;
 }
 
 export interface ExecutorInstance {
@@ -133,33 +131,23 @@ export async function startExecutor(
 
 export async function waitForHealth(
   port: number,
-  transport: Transport,
   timeoutMs: number = 60000,
   adminToken: string = "test123"
 ): Promise<number> {
   const start = performance.now();
   const deadline = start + timeoutMs;
 
-  // GraphQL branches: GET / returns 200
-  // REST/WS branches: GET /health returns JSON
-  let healthUrl: string;
-  if (transport === "ws" || transport === "rest") {
-    healthUrl = `http://127.0.0.1:${port}/health`;
-  } else {
-    healthUrl = `http://127.0.0.1:${port}/`;
-  }
+  const healthUrl = `http://127.0.0.1:${port}/health`;
 
   while (performance.now() < deadline) {
     try {
       const res = await fetch(healthUrl);
       if (res.ok) {
-        // For WS transport, also verify WS endpoint is accepting connections
-        if (transport === "ws") {
-          const wsReady = await checkWsReady(port, adminToken, 5000).catch(() => false);
-          if (!wsReady) {
-            await sleep(500);
-            continue;
-          }
+        // Also verify WS endpoint is accepting connections
+        const wsReady = await checkWsReady(port, adminToken, 5000).catch(() => false);
+        if (!wsReady) {
+          await sleep(500);
+          continue;
         }
         return performance.now() - start;
       }

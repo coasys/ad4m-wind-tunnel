@@ -1,6 +1,5 @@
 /**
- * Instrumented AD4M Client
- * Supports both GraphQL (dev, sparql-1.2-cleanup) and REST (sse-to-websocket) APIs.
+ * Instrumented AD4M Client — WebSocket RPC
  */
 
 import WebSocket from "ws";
@@ -12,13 +11,10 @@ export interface TimedResult<T> {
   error?: string;
 }
 
-export type Transport = "graphql" | "rest" | "ws";
-
 export interface ClientConfig {
   port: number;
   host?: string;
   adminToken: string;
-  transport: Transport;
 }
 
 export class InstrumentedClient {
@@ -51,36 +47,34 @@ export class InstrumentedClient {
   }
 
   async connect(): Promise<void> {
-    if (this.config.transport === "ws") {
-      this.wsReady = new Promise((resolve, reject) => {
-        this.ws = new WebSocket(this.wsUrl);
-        this.ws.on("open", () => resolve());
-        this.ws.on("error", (err) => reject(err));
-        this.ws.on("message", (data) => {
-          try {
-            const msg = JSON.parse(data.toString());
-            if (msg.id) {
-              const pending = this.pendingRequests.get(String(msg.id));
-              if (pending) {
-                this.pendingRequests.delete(String(msg.id));
-                if (msg.error) {
-                  pending.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
-                } else {
-                  pending.resolve(msg.result);
-                }
+    this.wsReady = new Promise((resolve, reject) => {
+      this.ws = new WebSocket(this.wsUrl);
+      this.ws.on("open", () => resolve());
+      this.ws.on("error", (err) => reject(err));
+      this.ws.on("message", (data) => {
+        try {
+          const msg = JSON.parse(data.toString());
+          if (msg.id) {
+            const pending = this.pendingRequests.get(String(msg.id));
+            if (pending) {
+              this.pendingRequests.delete(String(msg.id));
+              if (msg.error) {
+                pending.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+              } else {
+                pending.resolve(msg.result);
               }
             }
-          } catch {}
-        });
-        this.ws.on("close", () => {
-          for (const [, p] of this.pendingRequests) {
-            p.reject(new Error("WebSocket closed"));
           }
-          this.pendingRequests.clear();
-        });
+        } catch {}
       });
-      await this.wsReady;
-    }
+      this.ws.on("close", () => {
+        for (const [, p] of this.pendingRequests) {
+          p.reject(new Error("WebSocket closed"));
+        }
+        this.pendingRequests.clear();
+      });
+    });
+    await this.wsReady;
   }
 
   async disconnect(): Promise<void> {
@@ -107,51 +101,6 @@ export class InstrumentedClient {
     });
   }
 
-  private async restCall<T>(method: string, path: string, body?: any): Promise<T> {
-    const url = `${this.baseUrl}${path}`;
-    const opts: RequestInit = {
-      method,
-      headers: {
-        Authorization: `Bearer ${this.config.adminToken}`,
-        "Content-Type": "application/json",
-      },
-    };
-    if (body) opts.body = JSON.stringify(body);
-    const res = await fetch(url, opts);
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(`HTTP ${res.status}: ${text}`);
-    }
-    const contentType = res.headers.get("content-type") || "";
-    if (contentType.includes("application/json")) {
-      return (await res.json()) as T;
-    }
-    return (await res.text()) as unknown as T;
-  }
-
-  private async graphqlCall<T>(query: string, variables?: Record<string, any>): Promise<T> {
-    const url = `${this.baseUrl}/graphql`;
-    const body: any = { query };
-    if (variables) body.variables = variables;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: this.config.adminToken,
-      },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(`GraphQL HTTP ${res.status}: ${text}`);
-    }
-    const json = await res.json() as any;
-    if (json.errors && json.errors.length > 0) {
-      throw new Error(`GraphQL error: ${json.errors[0].message}`);
-    }
-    return json.data as T;
-  }
-
   async timed<T>(fn: () => Promise<T>): Promise<TimedResult<T>> {
     const start = performance.now();
     const timestamp = Date.now();
@@ -174,15 +123,6 @@ export class InstrumentedClient {
   // --- High-level operations ---
 
   async health(): Promise<TimedResult<any>> {
-    if (this.config.transport === "graphql") {
-      // GraphQL branches: GET / returns 200
-      return this.timed(async () => {
-        const res = await fetch(`${this.baseUrl}/`);
-        if (!res.ok) throw new Error(`Health HTTP ${res.status}`);
-        return { status: "ok" };
-      });
-    }
-    // REST/WS branches: GET /health returns JSON
     return this.timed(async () => {
       const res = await fetch(`${this.baseUrl}/health`);
       if (!res.ok) throw new Error(`Health HTTP ${res.status}`);
@@ -191,34 +131,11 @@ export class InstrumentedClient {
   }
 
   async generateAgent(passphrase: string): Promise<TimedResult<any>> {
-    if (this.config.transport === "ws") {
-      return this.timed(() => this.wsCall("agent.generate", { passphrase }));
-    }
-    if (this.config.transport === "rest") {
-      return this.timed(() =>
-        this.restCall("POST", "/api/v1/agent/generate", { passphrase })
-      );
-    }
-    // GraphQL
-    return this.timed(() =>
-      this.graphqlCall(`mutation { agentGenerate(passphrase: "${passphrase}") { did isInitialized } }`)
-    );
+    return this.timed(() => this.wsCall("agent.generate", { passphrase }));
   }
 
   async createPerspective(name: string): Promise<TimedResult<any>> {
-    if (this.config.transport === "ws") {
-      return this.timed(() => this.wsCall("perspective.create", { name }));
-    }
-    if (this.config.transport === "rest") {
-      return this.timed(() =>
-        this.restCall("POST", "/api/v1/perspectives", { name })
-      );
-    }
-    // GraphQL
-    return this.timed(async () => {
-      const data = await this.graphqlCall<any>(`mutation { perspectiveAdd(name: "${name}") { uuid name } }`);
-      return data.perspectiveAdd;
-    });
+    return this.timed(() => this.wsCall("perspective.create", { name }));
   }
 
   async addLink(
@@ -227,114 +144,36 @@ export class InstrumentedClient {
     predicate: string,
     target: string
   ): Promise<TimedResult<any>> {
-    if (this.config.transport === "ws") {
-      return this.timed(() =>
-        this.wsCall("perspective.addLink", {
-          uuid: perspectiveUuid,
-          link: { source, predicate, target },
-        })
-      );
-    }
-    if (this.config.transport === "rest") {
-      return this.timed(() =>
-        this.restCall("POST", `/api/v1/perspectives/${perspectiveUuid}/links`, {
-          source, predicate, target,
-        })
-      );
-    }
-    // GraphQL
-    return this.timed(async () => {
-      const mutation = `mutation {
-        perspectiveAddLink(uuid: "${perspectiveUuid}", link: {source: "${source}", predicate: "${predicate}", target: "${target}"}) {
-          author
-          timestamp
-          data { source predicate target }
-        }
-      }`;
-      const data = await this.graphqlCall<any>(mutation);
-      return data.perspectiveAddLink;
-    });
+    return this.timed(() =>
+      this.wsCall("perspective.addLink", {
+        uuid: perspectiveUuid,
+        link: { source, predicate, target },
+      })
+    );
   }
 
   async queryLinks(
     perspectiveUuid: string,
     params?: { source?: string; predicate?: string; target?: string }
   ): Promise<TimedResult<any>> {
-    if (this.config.transport === "ws") {
-      return this.timed(() =>
-        this.wsCall("perspective.queryLinks", {
-          uuid: perspectiveUuid,
-          query: params || {},
-        })
-      );
-    }
-    if (this.config.transport === "rest") {
-      const qs = new URLSearchParams();
-      if (params?.source) qs.set("source", params.source);
-      if (params?.predicate) qs.set("predicate", params.predicate);
-      if (params?.target) qs.set("target", params.target);
-      const query = qs.toString() ? `?${qs.toString()}` : "";
-      return this.timed(() =>
-        this.restCall("GET", `/api/v1/perspectives/${perspectiveUuid}/links${query}`)
-      );
-    }
-    // GraphQL
-    return this.timed(async () => {
-      const queryParts: string[] = [];
-      if (params?.source) queryParts.push(`source: "${params.source}"`);
-      if (params?.predicate) queryParts.push(`predicate: "${params.predicate}"`);
-      if (params?.target) queryParts.push(`target: "${params.target}"`);
-      const queryArg = queryParts.length > 0 ? `query: {${queryParts.join(", ")}}` : `query: {}`;
-      const gql = `query {
-        perspectiveQueryLinks(uuid: "${perspectiveUuid}", ${queryArg}) {
-          author
-          timestamp
-          data { source predicate target }
-        }
-      }`;
-      const data = await this.graphqlCall<any>(gql);
-      return data.perspectiveQueryLinks;
-    });
+    return this.timed(() =>
+      this.wsCall("perspective.queryLinks", {
+        uuid: perspectiveUuid,
+        query: params || {},
+      })
+    );
   }
 
   async runProlog(perspectiveUuid: string, query: string): Promise<TimedResult<any>> {
-    if (this.config.transport === "ws") {
-      return this.timed(() =>
-        this.wsCall("perspective.queryProlog", { uuid: perspectiveUuid, query })
-      );
-    }
-    if (this.config.transport === "rest") {
-      return this.timed(() =>
-        this.restCall("POST", `/api/v1/perspectives/${perspectiveUuid}/prolog`, { query })
-      );
-    }
-    // GraphQL
-    return this.timed(async () => {
-      const escaped = query.replace(/"/g, '\\"');
-      const gql = `query { perspectiveQueryProlog(uuid: "${perspectiveUuid}", query: "${escaped}") }`;
-      const data = await this.graphqlCall<any>(gql);
-      return data.perspectiveQueryProlog;
-    });
+    return this.timed(() =>
+      this.wsCall("perspective.queryProlog", { uuid: perspectiveUuid, query })
+    );
   }
 
   async querySparql(perspectiveUuid: string, query: string): Promise<TimedResult<any>> {
-    if (this.config.transport === "ws") {
-      return this.timed(() =>
-        this.wsCall("perspective.querySparql", { uuid: perspectiveUuid, query })
-      );
-    }
-    if (this.config.transport === "rest") {
-      return this.timed(() =>
-        this.restCall("POST", `/api/v1/perspectives/${perspectiveUuid}/sparql`, { query })
-      );
-    }
-    // GraphQL
-    return this.timed(async () => {
-      const escaped = query.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
-      const gql = `query { perspectiveQuerySparql(uuid: "${perspectiveUuid}", query: "${escaped}") }`;
-      const data = await this.graphqlCall<any>(gql);
-      return data.perspectiveQuerySparql;
-    });
+    return this.timed(() =>
+      this.wsCall("perspective.querySparql", { uuid: perspectiveUuid, query })
+    );
   }
 
   resetMetrics(): void {

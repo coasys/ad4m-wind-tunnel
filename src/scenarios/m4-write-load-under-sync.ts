@@ -10,7 +10,7 @@ import { execSync } from "child_process";
 import { join } from "path";
 import { Scenario, ScenarioContext, ScenarioResult } from "../scenario.js";
 import { startExecutor, waitForHealth, stopExecutor, sleep, ExecutorConfig } from "../executor.js";
-import { InstrumentedClient, Transport } from "../client.js";
+import { InstrumentedClient } from "../client.js";
 
 function getRssKb(pid: number): number {
   try {
@@ -52,7 +52,6 @@ export const m4WriteLoadUnderSync: Scenario = {
     const { client, branch, port } = ctx;
     const startTime = Date.now();
     const samples: ScenarioResult["samples"] = [];
-    const transport = ctx.client.config.transport;
 
     const branchDirName = branch.replace(/\//g, "-");
     const binaryPath = join(ctx.tmpDirBase, `ad4m-build-${branchDirName}`, "target", "release", "ad4m-executor");
@@ -72,18 +71,15 @@ export const m4WriteLoadUnderSync: Scenario = {
         adminToken: ctx.adminToken,
         adamRepoPath: ctx.adamRepoPath,
         buildDir: join(ctx.tmpDirBase, `ad4m-build-${branchDirName}`),
-        transport,
       };
       proc2 = await startExecutor(binaryPath, config2);
-      await waitForHealth(port2, transport, 120000, ctx.adminToken);
+      await waitForHealth(port2, 120000, ctx.adminToken);
       console.log("[m4] Executor 2 healthy");
 
       // Client 1 is already provided
       const client1 = client;
-      const client2 = new InstrumentedClient({ port: port2, adminToken: ctx.adminToken, transport });
-      if (transport === "ws") {
-        await client2.connect();
-      }
+      const client2 = new InstrumentedClient({ port: port2, adminToken: ctx.adminToken });
+      await client2.connect();
 
       // Setup perspectives
       await client1.generateAgent("m4-executor1");

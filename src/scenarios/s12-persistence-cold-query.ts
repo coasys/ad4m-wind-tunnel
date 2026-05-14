@@ -14,7 +14,7 @@ import { existsSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
 import { Scenario, ScenarioContext, ScenarioResult } from "../scenario.js";
 import { waitForHealth, sleep } from "../executor.js";
-import { InstrumentedClient, Transport } from "../client.js";
+import { InstrumentedClient } from "../client.js";
 
 const SEED_LINK_COUNT = 100_000;
 const BATCH_SIZE = 500;
@@ -47,7 +47,7 @@ function startExecutorRaw(
   const proc = spawn(binaryPath, [
     "run",
     "--app-data-path", dataPath,
-    "--gql-port", String(port),
+    "--port", String(port),
     "--admin-credential", adminToken,
     "--run-dapp-server", "false",
     "--hc-use-bootstrap", "false",
@@ -108,7 +108,6 @@ export const s12PersistenceColdQuery: Scenario = {
       };
     }
 
-    const transport = client.config.transport;
     const adminToken = client.config.adminToken;
     const dataPath = join(ctx.tmpDirBase, `ad4m-wt-s12-persist-${branch.replace(/\//g, "-")}`);
 
@@ -135,14 +134,14 @@ export const s12PersistenceColdQuery: Scenario = {
 
     const emptyPort = port + 5; // Use a different port to avoid conflict with running executor
     let proc = startExecutorRaw(binaryPath, dataPath, emptyPort, adminToken);
-    const emptyStartMs = await waitForHealth(emptyPort, transport, 120000, adminToken);
+    const emptyStartMs = await waitForHealth(emptyPort, 120000, adminToken);
     console.log(`[s12] Empty startup: ${emptyStartMs.toFixed(0)}ms`);
 
     samples.push({ name: "empty_startup", durationMs: emptyStartMs, timestamp: Date.now() });
 
     // Create a client for seeding
-    const seedClient = new InstrumentedClient({ port: emptyPort, adminToken, transport });
-    if (transport === "ws") await seedClient.connect();
+    const seedClient = new InstrumentedClient({ port: emptyPort, adminToken });
+    await seedClient.connect();
 
     // Setup agent and perspective
     await seedClient.generateAgent("wind-tunnel-persistence");
@@ -200,15 +199,15 @@ export const s12PersistenceColdQuery: Scenario = {
     console.log(`[s12] Phase 4: Cold restart with ${SEED_LINK_COUNT} links...`);
     const coldRestartPort = emptyPort; // Reuse same port now it's stopped
     proc = startExecutorRaw(binaryPath, dataPath, coldRestartPort, adminToken);
-    const dataStartMs = await waitForHealth(coldRestartPort, transport, 300000, adminToken); // 5min timeout for large data
+    const dataStartMs = await waitForHealth(coldRestartPort, 300000, adminToken); // 5min timeout for large data
     console.log(`[s12] Cold restart with data: ${dataStartMs.toFixed(0)}ms`);
 
     samples.push({ name: "cold_restart_with_data", durationMs: dataStartMs, timestamp: Date.now() });
 
     // Phase 5: Immediate queries after health
     console.log(`[s12] Phase 5: Cold query performance...`);
-    const coldClient = new InstrumentedClient({ port: coldRestartPort, adminToken, transport });
-    if (transport === "ws") await coldClient.connect();
+    const coldClient = new InstrumentedClient({ port: coldRestartPort, adminToken });
+    await coldClient.connect();
 
     // Query all (may be expensive)
     const queryAllResult = await coldClient.timed(async () => {

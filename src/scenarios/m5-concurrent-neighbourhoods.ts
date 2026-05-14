@@ -10,7 +10,7 @@ import { execSync } from "child_process";
 import { join } from "path";
 import { Scenario, ScenarioContext, ScenarioResult } from "../scenario.js";
 import { startExecutor, waitForHealth, stopExecutor, sleep, ExecutorConfig } from "../executor.js";
-import { InstrumentedClient, Transport } from "../client.js";
+import { InstrumentedClient } from "../client.js";
 
 const PERSPECTIVES_PER_EXECUTOR = 3;
 
@@ -54,7 +54,6 @@ export const m5ConcurrentNeighbourhoods: Scenario = {
     const { client, branch, port } = ctx;
     const startTime = Date.now();
     const samples: ScenarioResult["samples"] = [];
-    const transport = ctx.client.config.transport;
 
     const branchDirName = branch.replace(/\//g, "-");
     const binaryPath = join(ctx.tmpDirBase, `ad4m-build-${branchDirName}`, "target", "release", "ad4m-executor");
@@ -80,11 +79,10 @@ export const m5ConcurrentNeighbourhoods: Scenario = {
         adminToken: ctx.adminToken,
         adamRepoPath: ctx.adamRepoPath,
         buildDir: join(ctx.tmpDirBase, `ad4m-build-${branchDirName}`),
-        transport,
       };
       const proc2 = await startExecutor(binaryPath, config2);
       extraProcs.push(proc2);
-      await waitForHealth(port2, transport, 120000, ctx.adminToken);
+      await waitForHealth(port2, 120000, ctx.adminToken);
       console.log(`[m5] Executor 2 healthy`);
 
       // Start executor 3
@@ -95,20 +93,17 @@ export const m5ConcurrentNeighbourhoods: Scenario = {
         adminToken: ctx.adminToken,
         adamRepoPath: ctx.adamRepoPath,
         buildDir: join(ctx.tmpDirBase, `ad4m-build-${branchDirName}`),
-        transport,
       };
       const proc3 = await startExecutor(binaryPath, config3);
       extraProcs.push(proc3);
-      await waitForHealth(port3, transport, 120000, ctx.adminToken);
+      await waitForHealth(port3, 120000, ctx.adminToken);
       console.log(`[m5] Executor 3 healthy`);
 
       // Create clients for executors 2 and 3
-      const client2 = new InstrumentedClient({ port: port2, adminToken: ctx.adminToken, transport });
-      const client3 = new InstrumentedClient({ port: port3, adminToken: ctx.adminToken, transport });
-      if (transport === "ws") {
-        await client2.connect();
-        await client3.connect();
-      }
+      const client2 = new InstrumentedClient({ port: port2, adminToken: ctx.adminToken });
+      const client3 = new InstrumentedClient({ port: port3, adminToken: ctx.adminToken });
+      await client2.connect();
+      await client3.connect();
       allClients.push(client2, client3);
 
       // Setup: generate agents + create perspectives

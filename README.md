@@ -49,17 +49,12 @@ npm install
 
 Results are in `results/<branch-name>/`. Run `npx tsx src/report.ts` to regenerate `results/comparison.md`.
 
-Branches tested:
-- `dev` — current main development (GraphQL API)
-- `feat/sse-to-websocket` — WebSocket RPC transport
-- `feat/sparql-1.2-cleanup` — Ad4mModel refactor, RDF Reifiers, optimisations
-
 #### Architecture
 
 ```
 src/
 ├── main.ts           # Runner/orchestrator
-├── client.ts         # Instrumented AD4M client (GraphQL + REST + WS)
+├── client.ts         # Instrumented AD4M client (WebSocket RPC)
 ├── executor.ts       # Executor lifecycle management (build/start/stop)
 ├── scenario.ts       # Scenario interface
 ├── reporters.ts      # Console + JSON reporters

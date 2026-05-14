@@ -28,7 +28,6 @@ export const m2MultiExecutorScale: Scenario = {
     const { client, branch, port } = ctx;
     const startTime = Date.now();
     const samples: ScenarioResult["samples"] = [];
-    const transport = ctx.client.config.transport;
 
     // First, measure single-executor baseline using the already-running executor
     await client.generateAgent("wind-tunnel-multi-exec-baseline");
@@ -109,17 +108,16 @@ export const m2MultiExecutorScale: Scenario = {
         adminToken: ctx.adminToken,
         adamRepoPath: ctx.adamRepoPath,
         buildDir: join(ctx.tmpDirBase, `ad4m-build-${branchDirName}`),
-        transport,
       };
 
       try {
         const proc = await startExecutor(binaryPath, config);
-        await waitForHealth(execPort, transport, 120000, ctx.adminToken);
+        await waitForHealth(execPort, 120000, ctx.adminToken);
         additionalProcs.push(proc);
         additionalPorts.push(execPort);
 
-        const c = new InstrumentedClient({ port: execPort, adminToken: ctx.adminToken, transport });
-        if (transport === "ws") await c.connect();
+        const c = new InstrumentedClient({ port: execPort, adminToken: ctx.adminToken });
+        await c.connect();
         additionalClients.push(c);
       } catch (err: any) {
         console.log(`[m2] Failed to start executor ${i}: ${err.message}`);

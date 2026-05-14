@@ -88,7 +88,6 @@ export const s13ReadWriteMix: Scenario = {
     }
 
     const uuid = perspective.data?.uuid || perspective.data?.id;
-    const transport = client.config.transport;
     const adminToken = client.config.adminToken;
 
     // Seed links
@@ -128,13 +127,13 @@ export const s13ReadWriteMix: Scenario = {
       const readerClients: InstrumentedClient[] = [];
 
       for (let i = 0; i < writers; i++) {
-        const c = new InstrumentedClient({ port, adminToken, transport });
-        if (transport === "ws") await c.connect();
+        const c = new InstrumentedClient({ port, adminToken });
+        await c.connect();
         writerClients.push(c);
       }
       for (let i = 0; i < readers; i++) {
-        const c = new InstrumentedClient({ port, adminToken, transport });
-        if (transport === "ws") await c.connect();
+        const c = new InstrumentedClient({ port, adminToken });
+        await c.connect();
         readerClients.push(c);
       }
 

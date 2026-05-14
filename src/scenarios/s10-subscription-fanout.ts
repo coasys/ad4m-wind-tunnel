@@ -39,68 +39,6 @@ interface SubscriberHandle {
   close: () => void;
 }
 
-async function createGraphQLSubscriber(
-  port: number,
-  perspectiveUuid: string,
-  adminToken: string,
-  delayMs?: number
-): Promise<SubscriberHandle> {
-  const notifications: { linkTimestamp: number; receivedAt: number }[] = [];
-
-  // GraphQL subscriptions use the graphql-transport-ws protocol over WebSocket
-  const ws = new WebSocket(`ws://127.0.0.1:${port}/graphql`, "graphql-transport-ws");
-
-  await new Promise<void>((resolve, reject) => {
-    let subscribed = false;
-    ws.on("open", () => {
-      // Init connection with auth in headers (matching server's connection_init handler)
-      ws.send(JSON.stringify({
-        type: "connection_init",
-        payload: { headers: { authorization: adminToken } },
-      }));
-    });
-    ws.on("message", (data) => {
-      try {
-        const msg = JSON.parse(data.toString());
-        if (msg.type === "connection_ack" && !subscribed) {
-          subscribed = true;
-          // Subscribe to link additions (author is String!, not object)
-          ws.send(JSON.stringify({
-            id: "1",
-            type: "subscribe",
-            payload: {
-              query: `subscription { perspectiveLinkAdded(uuid: "${perspectiveUuid}") { author timestamp data { source predicate target } } }`,
-            },
-          }));
-          resolve();
-        } else if (msg.type === "next" && msg.id === "1") {
-          const receivedAt = performance.now();
-          if (delayMs) {
-            // Simulate slow subscriber by blocking in message handler
-            const end = performance.now() + delayMs;
-            while (performance.now() < end) { /* busy wait */ }
-          }
-          notifications.push({
-            linkTimestamp: msg.payload?.data?.perspectiveLinkAdded?.timestamp || 0,
-            receivedAt,
-          });
-        }
-      } catch {}
-    });
-    ws.on("error", (err) => reject(err));
-    setTimeout(() => reject(new Error("GraphQL subscription timeout")), 10000);
-  });
-
-  return {
-    ws,
-    notifications,
-    close: () => {
-      try { ws.send(JSON.stringify({ id: "1", type: "complete" })); } catch {}
-      ws.close();
-    },
-  };
-}
-
 async function createWSSubscriber(
   port: number,
   perspectiveUuid: string,
@@ -210,7 +148,6 @@ export const s10SubscriptionFanout: Scenario = {
     }
 
     const uuid = perspective.data?.uuid || perspective.data?.id;
-    const transport = client.config.transport;
     const adminToken = client.config.adminToken;
 
     // Find executor PID
@@ -222,10 +159,6 @@ export const s10SubscriptionFanout: Scenario = {
 
     const baselineRss = executorPid ? getRssKb(executorPid) : 0;
     const tierResults: TierResult[] = [];
-
-    const createSubscriber = transport === "ws" || transport === "rest"
-      ? createWSSubscriber
-      : createGraphQLSubscriber;
 
     for (const subscriberCount of SUBSCRIBER_TIERS) {
       console.log(`[s10] Testing with ${subscriberCount} subscribers...`);
@@ -241,7 +174,7 @@ export const s10SubscriptionFanout: Scenario = {
           const isSlowSub = isLastTier && i === subscriberCount - 1;
           if (isSlowSub) slowSubIndex = i;
 
-          const sub = await createSubscriber(
+          const sub = await createWSSubscriber(
             port,
             uuid,
             adminToken,
@@ -297,8 +230,6 @@ export const s10SubscriptionFanout: Scenario = {
       const rssNow = executorPid ? getRssKb(executorPid) : 0;
 
       // Calculate notification latencies
-      // We can't get exact per-write→per-notification mapping without correlation,
-      // but we can measure overall notification count and average delivery time
       const allLatencies: number[] = [];
       let totalNotifications = 0;
 
