@@ -72,9 +72,7 @@ export const m2MultiExecutorScale: Scenario = {
 
     // Now start additional executors and run concurrent workloads
     // Determine binary path from the build dir
-    const branchDirName = branch === "dev" ? "dev"
-      : branch === "feat/sse-to-websocket" ? "feat-sse-to-websocket"
-      : "feat-sparql-1.2-cleanup";
+    const branchDirName = branch.replace(/\//g, "-");
     const binaryPath = join(ctx.tmpDirBase, `ad4m-build-${branchDirName}`, "target", "release", "ad4m-executor");
 
     if (!existsSync(binaryPath)) {

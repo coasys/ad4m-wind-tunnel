@@ -12,17 +12,20 @@ Load testing framework for the AD4M executor, inspired by [Holochain's Wind Tunn
 # Install dependencies
 npm install
 
-# Run all scenarios against all branches (builds executors ~15min each)
-./run.sh
+# Run all scenarios against a branch (builds executor ~15min)
+./run.sh --branch my-feature
 
-# Run with pre-built executors
-./run.sh --skip-build
+# Compare two branches
+./run.sh --branch main --branch my-feature
+
+# Run with pre-built executor (skip build)
+./run.sh --skip-build --executor-path /path/to/ad4m-executor
 
 # Run specific scenario
 ./run.sh --scenario s1
 
-# Run against specific branch
-./run.sh --branch dev
+# Run specific scenario against specific branch
+./run.sh --branch main --scenario s1
 ```
 
 #### Scenarios
@@ -47,7 +50,7 @@ npm install
 
 #### Results
 
-Results are in `results/<branch-name>/`. Run `npx tsx src/report.ts` to regenerate `results/comparison.md`.
+Results are written to `results/<branch-name>/` (branch slashes replaced with dashes). Run `npx tsx src/report.ts` to regenerate `results/comparison.md`.
 
 #### Architecture
 

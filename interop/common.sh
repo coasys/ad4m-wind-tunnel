@@ -46,9 +46,9 @@ check_deps() {
     fi
 }
 
-AD4M_RPC="$REPO_DIR/scripts/ad4m-gql.py"
+AD4M_RPC="$REPO_DIR/scripts/ad4m-rpc.py"
 if [[ ! -f "$AD4M_RPC" ]]; then
-    echo "ERROR: ad4m-gql.py not found at $AD4M_RPC" >&2
+    echo "ERROR: ad4m-rpc.py not found at $AD4M_RPC" >&2
     exit 1
 fi
 

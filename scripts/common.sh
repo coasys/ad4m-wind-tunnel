@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # common.sh — Shared functions for AD4M multi-device integration tests
-# Uses WebSocket RPC via ad4m-rpc.py (replaces the old GraphQL-over-HTTP layer)
+# Uses WebSocket RPC via ad4m-rpc.py
 # shellcheck disable=SC2034  # Variables are used by sourcing scripts
 
 set -euo pipefail
