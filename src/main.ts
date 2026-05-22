@@ -13,6 +13,7 @@ import {
   m1NeighbourhoodSync, m2MultiExecutorScale, m3LinkLanguageComparison,
   m4WriteLoadUnderSync, m5ConcurrentNeighbourhoods,
   a1McpThroughput,
+  s9NeighbourhoodMemoryLeak,
   s10SubscriptionFanout, s12PersistenceColdQuery, s13ReadWriteMix, s14MultiPerspectiveLoad,
 } from "./scenarios/index.js";
 import { consoleReport, jsonReport, comparisonReport } from "./reporters.js";
@@ -26,6 +27,7 @@ const ALL_SCENARIOS: Scenario[] = [
   m1NeighbourhoodSync, m2MultiExecutorScale, m3LinkLanguageComparison,
   m4WriteLoadUnderSync, m5ConcurrentNeighbourhoods,
   a1McpThroughput,
+  s9NeighbourhoodMemoryLeak,
   s10SubscriptionFanout, s12PersistenceColdQuery, s13ReadWriteMix, s14MultiPerspectiveLoad,
 ];
 

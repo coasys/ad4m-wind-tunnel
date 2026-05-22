@@ -41,6 +41,7 @@ npm install
 | S6 | API Concurrency | Multiple concurrent connections doing mixed operations |
 | S7 | Memory Stability | RSS growth over sustained workload (5 min run) |
 | S8 | Subject Class Queries | Realistic Flux community graph + SPARQL/link query benchmarks |
+| S9 | Neighbourhood Memory Leak | 10k-link neighbourhood perspective + active WS subscription, RSS regression over multi-minute steady-state |
 | M1 | Neighbourhood Sync | Dual-executor neighbourhood create/join/sync |
 | M2 | Multi-Executor Scale | 3 executors, cross-interference measurement |
 | M3 | Link Language Comparison | Docker infra startup + local baseline comparison |

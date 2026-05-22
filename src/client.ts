@@ -176,6 +176,32 @@ export class InstrumentedClient {
     );
   }
 
+  async applyTemplateAndPublish(
+    sourceLanguageHash: string,
+    templateData: string
+  ): Promise<TimedResult<any>> {
+    return this.timed(() =>
+      this.wsCall("language.applyTemplate", {
+        sourceLanguageHash,
+        templateData,
+      })
+    );
+  }
+
+  async publishNeighbourhood(
+    perspectiveUuid: string,
+    linkLanguageAddress: string,
+    meta?: { links?: any[] }
+  ): Promise<TimedResult<any>> {
+    return this.timed(() =>
+      this.wsCall("neighbourhood.publish", {
+        perspectiveUuid,
+        linkLanguage: linkLanguageAddress,
+        meta: meta || { links: [] },
+      })
+    );
+  }
+
   resetMetrics(): void {
     this.metrics = { totalRequests: 0, totalErrors: 0, totalDurationMs: 0, latencies: [] };
   }

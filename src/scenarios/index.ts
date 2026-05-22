@@ -13,6 +13,7 @@ export { m3LinkLanguageComparison } from "./m3-link-language-comparison.js";
 export { m4WriteLoadUnderSync } from "./m4-write-load-under-sync.js";
 export { m5ConcurrentNeighbourhoods } from "./m5-concurrent-neighbourhoods.js";
 export { a1McpThroughput } from "./a1-mcp-throughput.js";
+export { s9NeighbourhoodMemoryLeak } from "./s9-neighbourhood-memory-leak.js";
 export { s10SubscriptionFanout } from "./s10-subscription-fanout.js";
 export { s12PersistenceColdQuery } from "./s12-persistence-cold-query.js";
 export { s13ReadWriteMix } from "./s13-read-write-mix.js";
