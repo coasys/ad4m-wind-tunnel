@@ -67,9 +67,14 @@ const MONITOR_LINK_INTERVAL_MS = 1_000;
 const MONITOR_QUERY_INTERVAL_MS = (parseInt(process.env.S9_MONITOR_QUERY_SEC || "30", 10) || 30) * 1000;
 const LEAK_THRESHOLD_MB_PER_MIN = 1; // > 1 MB/min steady-state = suspicious
 
-const SETTLE_DURATION_MS = (parseInt(process.env.S9_SETTLE_SEC || "60", 10) || 60) * 1000;
-const MONITOR_DURATION_MS = (parseInt(process.env.S9_MONITOR_SEC || "300", 10) || 300) * 1000;
-const COOLDOWN_DURATION_MS = (parseInt(process.env.S9_COOLDOWN_SEC || "30", 10) || 30) * 1000;
+// Defaults trimmed from 60/300/30 to 30/180/15 so a 4-mode sweep finishes
+// in ~16 min instead of ~30 min. 180s of monitor at 1 link/s + 1 query/30s
+// is 6 RSS samples per quarter — enough for least-squares fit to a >1 MB/min
+// threshold with low false-positive risk. For high-fidelity measurement
+// (e.g. PR-gate runs), set S9_MONITOR_SEC=300 or higher.
+const SETTLE_DURATION_MS = (parseInt(process.env.S9_SETTLE_SEC || "30", 10) || 30) * 1000;
+const MONITOR_DURATION_MS = (parseInt(process.env.S9_MONITOR_SEC || "180", 10) || 180) * 1000;
+const COOLDOWN_DURATION_MS = (parseInt(process.env.S9_COOLDOWN_SEC || "15", 10) || 15) * 1000;
 
 type Mode = "holochain" | "centralized" | "local" | "no-languages";
 type Phase = "setup" | "seed" | "settle" | "monitor" | "cooldown";

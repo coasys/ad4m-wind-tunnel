@@ -36,7 +36,10 @@ import { Scenario, ScenarioContext, ScenarioResult } from "../scenario.js";
 import { sleep } from "../executor.js";
 
 const SEED_LINKS = parseInt(process.env.S15_SEED || "2000", 10) || 2000;
-const PHASE_MS = (parseInt(process.env.S15_PHASE_SEC || "90", 10) || 90) * 1000;
+// 60s per phase × 3 phases + setup/seed ≈ 3.5 min total. With 1 RSS sample
+// every 2s that's 30 samples per phase — robust enough for a 1 MB/min slope
+// threshold and short enough for inner-loop dev iteration.
+const PHASE_MS = (parseInt(process.env.S15_PHASE_SEC || "60", 10) || 60) * 1000;
 const WRITE_RATE_PER_SEC = parseInt(process.env.S15_WRITE_RATE || "5", 10) || 5;
 const QUERY_INTERVAL_MS =
   (parseInt(process.env.S15_QUERY_INTERVAL_SEC || "5", 10) || 5) * 1000;

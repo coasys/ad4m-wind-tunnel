@@ -44,21 +44,22 @@ npm install
 | S9 | Neighbourhood Memory Leak | 10k-link neighbourhood perspective + active WS subscription, RSS regression over multi-minute steady-state |
 | S15 | Leak Attribution | Fast 3-phase RSS slope split between idle / writes / writes+queries to pinpoint which path leaks |
 
-##### S9/S15 fast-mode env vars
+##### S9/S15 phase tuning
 
-For iteration speed, both scenarios respect duration env vars:
+Both leak scenarios expose phase-duration env vars. Defaults (~4 min/mode for S9, ~3.5 min for S15) are tuned for tight inner-loop iteration; bump them up for high-fidelity PR-gate runs.
 
 ```bash
-# S9 (default settle=60s, monitor=300s, cooldown=30s ≈ 7 min/mode)
-S9_SETTLE_SEC=30 S9_MONITOR_SEC=120 S9_COOLDOWN_SEC=15 ...   # ~3 min/mode
+# S9 — 4-mode leak isolation (default ≈ 4 min/mode → ~16 min sweep)
 S9_MODE=holochain|centralized|local|no-languages
-S9_MONITOR_QUERY_SEC=30     # query period during monitor (set huge to skip)
+S9_SETTLE_SEC=30    S9_MONITOR_SEC=180    S9_COOLDOWN_SEC=15    # defaults
+S9_SETTLE_SEC=60    S9_MONITOR_SEC=600    S9_COOLDOWN_SEC=30    # high-fidelity
+S9_MONITOR_QUERY_SEC=30      # query period during monitor (huge value = skip queries)
 
-# S15 (default phase=90s ≈ 5 min total)
-S15_SEED=2000 S15_PHASE_SEC=60 S15_RSS_INTERVAL_SEC=2 ...    # ~3.5 min
+# S15 — fast 3-phase leak attribution (default ≈ 3.5 min total)
+S15_SEED=2000   S15_PHASE_SEC=60   S15_RSS_INTERVAL_SEC=2       # defaults
 ```
 
-For absolute-number leak measurement use the serial S9 sweep (4 modes × 7 min ≈ 30 min). For inner-loop dev iteration prefer S15 (~5 min total, attributes the leak to write vs query path).
+For absolute leak verification: serial S9 sweep across all 4 modes (~16 min default, ~30 min high-fidelity). For inner-loop dev iteration: S15 (~3.5 min, attributes the leak to write vs query path automatically).
 | M1 | Neighbourhood Sync | Dual-executor neighbourhood create/join/sync |
 | M2 | Multi-Executor Scale | 3 executors, cross-interference measurement |
 | M3 | Link Language Comparison | Docker infra startup + local baseline comparison |
