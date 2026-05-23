@@ -262,10 +262,12 @@ export const s15LeakAttribution: Scenario = {
     const writeContribution = Math.round((writes.slopeMbPerMin - idle.slopeMbPerMin) * 100) / 100;
     const queryContribution = Math.round((queries.slopeMbPerMin - writes.slopeMbPerMin) * 100) / 100;
 
+    // Only POSITIVE slope counts as a leak — negative means RSS dropped
+    // during the phase (the allocator is releasing freed pages back to the
+    // OS), which is the desired behavior, not a leak.
     const verdict = (slope: number) => {
-      const abs = Math.abs(slope);
-      if (abs < 0.25) return "clean";
-      if (abs < LEAK_THRESHOLD_MB_PER_MIN) return "slow_growth";
+      if (slope <= 0.25) return "clean";
+      if (slope < LEAK_THRESHOLD_MB_PER_MIN) return "slow_growth";
       return "leaking";
     };
 
