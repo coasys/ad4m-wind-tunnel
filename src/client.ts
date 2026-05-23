@@ -176,6 +176,23 @@ export class InstrumentedClient {
     );
   }
 
+  async publishLanguage(
+    languagePath: string,
+    languageMeta: { name: string; description?: string; sourceCodeLink?: string; possibleTemplateParams?: string[] }
+  ): Promise<TimedResult<any>> {
+    return this.timed(() =>
+      this.wsCall("language.publish", {
+        languagePath,
+        languageMeta: {
+          name: languageMeta.name,
+          description: languageMeta.description ?? "",
+          sourceCodeLink: languageMeta.sourceCodeLink ?? "",
+          possibleTemplateParams: languageMeta.possibleTemplateParams ?? ["uid", "name"],
+        },
+      })
+    );
+  }
+
   async applyTemplateAndPublish(
     sourceLanguageHash: string,
     templateData: string

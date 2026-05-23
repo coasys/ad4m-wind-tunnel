@@ -15,6 +15,7 @@ import {
   a1McpThroughput,
   s9NeighbourhoodMemoryLeak,
   s10SubscriptionFanout, s12PersistenceColdQuery, s13ReadWriteMix, s14MultiPerspectiveLoad,
+  s15LeakAttribution,
 } from "./scenarios/index.js";
 import { consoleReport, jsonReport, comparisonReport } from "./reporters.js";
 import { config, validateAdamRepo } from "./config.js";
@@ -29,6 +30,7 @@ const ALL_SCENARIOS: Scenario[] = [
   a1McpThroughput,
   s9NeighbourhoodMemoryLeak,
   s10SubscriptionFanout, s12PersistenceColdQuery, s13ReadWriteMix, s14MultiPerspectiveLoad,
+  s15LeakAttribution,
 ];
 
 function parseArgs() {
@@ -69,6 +71,13 @@ async function runScenariosForBranch(
 
     // Fresh executor for each scenario
     const dataPath = join(config.tmpDirBase, `ad4m-wt-data-${dirName}-${scenario.id}`);
+    // S9 in `no-languages` mode boots the executor with --language-language-only
+    // so only the language-language Deno runtime loads. This is set here
+    // because executor flags must be picked at spawn time, not from the scenario.
+    const extraArgs: string[] = [];
+    if (scenario.id === "s9" && (process.env.S9_MODE || "").toLowerCase() === "no-languages") {
+      extraArgs.push("--language-language-only", "true");
+    }
     const config_: ExecutorConfig = {
       branch,
       port,
@@ -76,6 +85,7 @@ async function runScenariosForBranch(
       adminToken: config.adminToken,
       adamRepoPath: config.adamRepoPath,
       buildDir: join(config.tmpDirBase, `ad4m-build-${dirName}`),
+      extraArgs: extraArgs.length > 0 ? extraArgs : undefined,
     };
 
     let proc: any = null;

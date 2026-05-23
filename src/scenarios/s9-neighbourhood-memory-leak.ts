@@ -1,47 +1,86 @@
 /**
- * S9: Neighbourhood Memory Leak Detection
+ * S9: Memory Leak Isolation
  *
- * Targets the suspected leak in the executor under a realistic
- * Holochain-backed workload:
+ * Validates that the executor does not leak memory under sustained load,
+ * and isolates *where* a leak originates by switching modes via the
+ * `S9_MODE` env var:
  *
- *   1. Generate agent + create perspective
- *   2. Apply the p-diff-sync template and publish a neighbourhood from
- *      that perspective (full Holochain DNA install + conductor binding).
- *      If publish fails (e.g. no internet to fetch the template bundle),
- *      fall back to a local perspective and flag the result so the verdict
- *      is interpreted correctly.
- *   3. Open a second WebSocket connection as a passive event subscriber,
- *      counting `link-added` events to confirm the pubsub path stays live.
- *   4. Seed 10,000 links into the perspective in batches, sampling RSS
- *      so the seed-induced growth is separated from steady-state growth.
- *   5. Monitor phase: light steady-state activity (1 link/s, 1 query/30s)
- *      with RSS sampled every 5s for several minutes.
- *   6. Fit a linear regression to the monitor-phase RSS samples to compute
- *      a slope (MB/min) and report a leak verdict.
+ *   - `holochain`   (default) Apply p-diff-sync template + publish
+ *                   neighbourhood. Full Holochain DNA install +
+ *                   conductor binding + Deno link language.
+ *   - `centralized` Publish centralized-p-diff-sync.bundle.js locally,
+ *                   template + publish neighbourhood. No Holochain,
+ *                   but a heavy Deno link-language runtime (socket.io).
+ *   - `local`       No link language, no neighbourhood. System Deno
+ *                   languages (agent/perspective/neighbourhood) still
+ *                   loaded.
+ *   - `no-languages` Executor booted with `--language-language-only true`
+ *                   (the runner threads this in from main.ts). No link
+ *                   language. Only the language-language Deno isolate
+ *                   exists, and it's idle for our workload.
  *
- * The seed phase deliberately drives the same pubsub broadcast path the
- * subscriber monitors — if event delivery retains references, the leak
- * will show up in monitor-phase growth even after the seed completes.
+ * If `holochain` leaks and `local` doesn't → Holochain.
+ * If `holochain` and `centralized` both leak but `local` doesn't → Deno
+ * link-language runtime.
+ * If `local` leaks but `no-languages` doesn't → one of the system Deno
+ * languages.
+ * If `no-languages` still leaks → Rust core executor (pubsub / link
+ * store / WS handler).
+ *
+ * Each run cycles through three measured phases around the seed:
+ *   - SETTLE  (no activity) — does RSS plateau after the seed bursts?
+ *   - MONITOR (light steady load) — what's the leak rate under work?
+ *   - COOLDOWN (no activity) — does RSS plateau after work stops?
+ *
+ * The three slopes together separate "buffered allocation that drains"
+ * from "true monotonic leak". Durations are env-overrideable:
+ *   S9_SETTLE_SEC (default 60), S9_MONITOR_SEC (300), S9_COOLDOWN_SEC (30)
  */
 
 import { execSync } from "child_process";
 import { randomUUID } from "crypto";
+import { resolve as resolvePath } from "path";
+import { existsSync } from "fs";
 import WebSocket from "ws";
 import { Scenario, ScenarioContext, ScenarioResult } from "../scenario.js";
 import { sleep } from "../executor.js";
 
-// Bootstrap p-diff-sync template hash — kept in lockstep with
-// rust-executor/src/mainnet_seed.json#knownLinkLanguages[0]. If the
-// executor's bootstrap seed changes, update this constant.
 const DIFF_SYNC_TEMPLATE_HASH = "QmzSYwdbpzDfaBt28VZp5LYpy1Daq4agD7z8GTBVpJyyr3MPhTy";
+
+// Best-effort lookup for the centralized-p-diff-sync bundle. Override
+// with S9_CENTRALIZED_BUNDLE_PATH if your AD4M checkout lives elsewhere.
+function defaultCentralizedBundlePath(): string {
+  const candidates = [
+    process.env.S9_CENTRALIZED_BUNDLE_PATH,
+    resolvePath(process.cwd(), "../ad4m/bootstrap-languages/centralized-p-diff-sync/build/bundle.js"),
+    resolvePath(process.cwd(), "../../ad4m/bootstrap-languages/centralized-p-diff-sync/build/bundle.js"),
+    "/Users/josh/workspaces/coasys/ad4m/bootstrap-languages/centralized-p-diff-sync/build/bundle.js",
+  ].filter(Boolean) as string[];
+  for (const c of candidates) if (existsSync(c)) return c;
+  return candidates[candidates.length - 1] ?? "";
+}
 
 const SEED_LINK_COUNT = 10_000;
 const SEED_BATCH_SIZE = 250;
-const MONITOR_DURATION_MS = 3 * 60 * 1000;
-const MONITOR_LINK_INTERVAL_MS = 1_000;
-const MONITOR_QUERY_INTERVAL_MS = 30_000;
 const RSS_SAMPLE_INTERVAL_MS = 5_000;
-const LEAK_THRESHOLD_MB_PER_MIN = 1; // > 1MB/min on a steady-state workload is suspicious
+const MONITOR_LINK_INTERVAL_MS = 1_000;
+const MONITOR_QUERY_INTERVAL_MS = (parseInt(process.env.S9_MONITOR_QUERY_SEC || "30", 10) || 30) * 1000;
+const LEAK_THRESHOLD_MB_PER_MIN = 1; // > 1 MB/min steady-state = suspicious
+
+const SETTLE_DURATION_MS = (parseInt(process.env.S9_SETTLE_SEC || "60", 10) || 60) * 1000;
+const MONITOR_DURATION_MS = (parseInt(process.env.S9_MONITOR_SEC || "300", 10) || 300) * 1000;
+const COOLDOWN_DURATION_MS = (parseInt(process.env.S9_COOLDOWN_SEC || "30", 10) || 30) * 1000;
+
+type Mode = "holochain" | "centralized" | "local" | "no-languages";
+type Phase = "setup" | "seed" | "settle" | "monitor" | "cooldown";
+
+function parseMode(raw: string | undefined): Mode {
+  const v = (raw || "holochain").toLowerCase();
+  if (v === "centralized" || v === "local" || v === "no-languages" || v === "holochain") return v;
+  // Back-compat alias: previous runs used "neighbourhood" for holochain.
+  if (v === "neighbourhood") return "holochain";
+  return "holochain";
+}
 
 function getRssKb(pid: number): number | null {
   try {
@@ -64,69 +103,56 @@ function getExecutorPid(port: number): number | null {
   }
 }
 
-/** Simple least-squares slope on (x,y) points. Returns slope in y-units per x-unit. */
+/** Least-squares slope on (x,y) points; returns y-units per x-unit. */
 function linearSlope(points: { x: number; y: number }[]): number {
   const n = points.length;
   if (n < 2) return 0;
   let sx = 0, sy = 0, sxx = 0, sxy = 0;
-  for (const { x, y } of points) {
-    sx += x; sy += y; sxx += x * x; sxy += x * y;
-  }
+  for (const { x, y } of points) { sx += x; sy += y; sxx += x * x; sxy += x * y; }
   const denom = n * sxx - sx * sx;
-  if (denom === 0) return 0;
-  return (n * sxy - sx * sy) / denom;
+  return denom === 0 ? 0 : (n * sxy - sx * sy) / denom;
+}
+
+function classify(absMbPerMin: number, sampleCount: number): "stable" | "slow_growth" | "leaking" | "insufficient_data" {
+  if (sampleCount < 4) return "insufficient_data";
+  if (absMbPerMin < 0.25) return "stable";
+  if (absMbPerMin < LEAK_THRESHOLD_MB_PER_MIN) return "slow_growth";
+  return "leaking";
 }
 
 interface PassiveSubscriber {
   ws: WebSocket;
   linkAddedCount: number;
-  errorCount: number;
   close: () => void;
 }
 
-async function openPassiveSubscriber(
-  port: number,
-  adminToken: string
-): Promise<PassiveSubscriber> {
+async function openPassiveSubscriber(port: number, adminToken: string): Promise<PassiveSubscriber> {
   const ws = new WebSocket(`ws://127.0.0.1:${port}/api/v1/ws?token=${adminToken}`);
-  const sub: PassiveSubscriber = {
-    ws,
-    linkAddedCount: 0,
-    errorCount: 0,
-    close: () => {
-      try { ws.close(); } catch {}
-    },
-  };
-
+  const sub: PassiveSubscriber = { ws, linkAddedCount: 0, close: () => { try { ws.close(); } catch {} } };
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("Passive subscriber connect timeout")), 10_000);
     ws.on("open", () => { clearTimeout(timer); resolve(); });
     ws.on("error", (err) => { clearTimeout(timer); reject(err); });
   });
-
   ws.on("message", (data) => {
     try {
       const msg = JSON.parse(data.toString());
-      // The /api/v1/ws endpoint multiplexes RPC responses and pubsub events.
-      // Events have a top-level `type` field; RPC responses have `id`+`result`/`error`.
       if (msg.type === "link-added") sub.linkAddedCount++;
-    } catch {
-      sub.errorCount++;
-    }
+    } catch {}
   });
-
   return sub;
 }
 
 export const s9NeighbourhoodMemoryLeak: Scenario = {
   id: "s9",
-  name: "Neighbourhood Memory Leak",
-  description: "10k-link neighbourhood perspective + active WS subscription, RSS monitored for steady-state leak",
+  name: "Memory Leak Isolation",
+  description: "Multi-mode (holochain | centralized | local | no-languages) settle/monitor/cooldown RSS regression",
 
   async run(ctx: ScenarioContext): Promise<ScenarioResult> {
     const { client, branch, port, adminToken } = ctx;
     const startTime = Date.now();
     const samples: ScenarioResult["samples"] = [];
+    const mode: Mode = parseMode(process.env.S9_MODE);
 
     const executorPid = getExecutorPid(port);
     if (!executorPid) {
@@ -136,22 +162,18 @@ export const s9NeighbourhoodMemoryLeak: Scenario = {
         startTime,
         endTime: Date.now(),
         durationMs: Date.now() - startTime,
-        metrics: { error: "Could not resolve executor PID for RSS sampling" },
+        metrics: { mode, error: "Could not resolve executor PID for RSS sampling" },
         samples,
-        summary: "S9 FAILED: executor PID not found",
+        summary: `S9[${mode}] FAILED: executor PID not found`,
       };
     }
 
-    // RSS timeline samples — every entry tagged with the phase so we can
-    // distinguish seed-induced growth from steady-state growth.
-    type RssSample = { elapsedMs: number; rssKb: number; phase: "setup" | "seed" | "monitor" };
+    type RssSample = { elapsedMs: number; rssKb: number; phase: Phase };
     const rssSamples: RssSample[] = [];
     const runStart = performance.now();
-    const sampleRss = (phase: RssSample["phase"]) => {
+    const sampleRss = (phase: Phase) => {
       const rss = getRssKb(executorPid);
-      if (rss !== null) {
-        rssSamples.push({ elapsedMs: performance.now() - runStart, rssKb: rss, phase });
-      }
+      if (rss !== null) rssSamples.push({ elapsedMs: performance.now() - runStart, rssKb: rss, phase });
     };
 
     sampleRss("setup");
@@ -159,8 +181,9 @@ export const s9NeighbourhoodMemoryLeak: Scenario = {
     // ── Phase 0: agent + perspective ─────────────────────────────────
     const agent = await client.generateAgent("wind-tunnel-s9-memleak");
     samples.push({ name: "agent_generate", durationMs: agent.durationMs, timestamp: agent.timestamp, error: agent.error });
+    if (agent.error) console.log(`[s9] agent.generate error: ${agent.error}`);
 
-    const persp = await client.createPerspective("s9-neighbourhood-memleak");
+    const persp = await client.createPerspective(`s9-${mode}`);
     samples.push({ name: "perspective_create", durationMs: persp.durationMs, timestamp: persp.timestamp, error: persp.error });
     if (persp.error) {
       return {
@@ -169,56 +192,89 @@ export const s9NeighbourhoodMemoryLeak: Scenario = {
         startTime,
         endTime: Date.now(),
         durationMs: Date.now() - startTime,
-        metrics: { error: persp.error },
+        metrics: { mode, error: persp.error },
         samples,
-        summary: `S9 FAILED at perspective create: ${persp.error}`,
+        summary: `S9[${mode}] FAILED at perspective create: ${persp.error}`,
       };
     }
     const uuid = persp.data?.uuid || persp.data?.id;
-
     sampleRss("setup");
 
-    // ── Phase 1: publish neighbourhood (best-effort) ─────────────────
-    // Template application fetches the language bundle via the Cloudflare
-    // gateway — if offline or the bundle is unavailable, we fall back to
-    // a local-only perspective and mark the result accordingly. Holochain
-    // DNA install on publish is the main code path we want to exercise.
+    // ── Phase 1: link language / neighbourhood (mode-dependent) ─────
     let neighbourhoodPublished = false;
     let neighbourhoodNote = "";
+    let linkLanguageAddress: string | null = null;
     let templatedLanguageAddress: string | null = null;
 
-    console.log(`[s9] Applying p-diff-sync template (${DIFF_SYNC_TEMPLATE_HASH})...`);
-    const templated = await client.applyTemplateAndPublish(
-      DIFF_SYNC_TEMPLATE_HASH,
-      JSON.stringify({ uid: randomUUID(), name: "wind-tunnel-s9-memleak" })
-    );
-    samples.push({ name: "language_apply_template", durationMs: templated.durationMs, timestamp: templated.timestamp, error: templated.error });
-
-    if (templated.error) {
-      neighbourhoodNote = `template apply failed: ${templated.error}`;
-      console.log(`[s9] ${neighbourhoodNote} — falling back to local perspective`);
+    if (mode === "local" || mode === "no-languages") {
+      neighbourhoodNote = `skipped: S9_MODE=${mode}`;
+      console.log(`[s9] ${neighbourhoodNote}`);
     } else {
-      templatedLanguageAddress = templated.data?.address || templated.data?.hash || null;
-      if (!templatedLanguageAddress) {
-        neighbourhoodNote = "template apply returned no address";
-        console.log(`[s9] ${neighbourhoodNote} — falling back to local perspective`);
-      } else {
-        console.log(`[s9] Templated language: ${templatedLanguageAddress}`);
-        const published = await client.publishNeighbourhood(uuid, templatedLanguageAddress, { links: [] });
-        samples.push({ name: "neighbourhood_publish", durationMs: published.durationMs, timestamp: published.timestamp, error: published.error });
-        if (published.error) {
-          neighbourhoodNote = `neighbourhood publish failed: ${published.error}`;
-          console.log(`[s9] ${neighbourhoodNote} — continuing with local perspective`);
+      // For 'holochain' we template against the bootstrap-known p-diff-sync hash.
+      // For 'centralized' we first publish the local centralized-p-diff-sync
+      // bundle to get a hash, then template that.
+      let sourceHash: string | null = null;
+
+      if (mode === "centralized") {
+        const bundlePath = defaultCentralizedBundlePath();
+        if (!bundlePath || !existsSync(bundlePath)) {
+          neighbourhoodNote = `centralized bundle not found at ${bundlePath || "<no candidates>"}`;
+          console.log(`[s9] ${neighbourhoodNote} — continuing without link language`);
         } else {
-          neighbourhoodPublished = true;
-          console.log(`[s9] Neighbourhood published: ${published.data}`);
+          console.log(`[s9] Publishing centralized-p-diff-sync from ${bundlePath}...`);
+          const published = await client.publishLanguage(bundlePath, {
+            name: `centralized-p-diff-sync-${randomUUID().slice(0, 8)}`,
+            description: "wind-tunnel s9 centralized link language (Deno, no Holochain)",
+            possibleTemplateParams: ["uid", "name"],
+          });
+          samples.push({ name: "language_publish", durationMs: published.durationMs, timestamp: published.timestamp, error: published.error });
+          if (published.error) {
+            neighbourhoodNote = `centralized publish failed: ${published.error}`;
+            console.log(`[s9] ${neighbourhoodNote} — continuing without link language`);
+          } else {
+            sourceHash = published.data?.address ?? null;
+            console.log(`[s9] Centralized language published, hash=${sourceHash}`);
+          }
+        }
+      } else {
+        sourceHash = DIFF_SYNC_TEMPLATE_HASH;
+        console.log(`[s9] Using p-diff-sync template hash ${sourceHash}`);
+      }
+
+      if (sourceHash) {
+        const templated = await client.applyTemplateAndPublish(
+          sourceHash,
+          JSON.stringify({ uid: randomUUID(), name: `wind-tunnel-s9-${mode}` })
+        );
+        samples.push({ name: "language_apply_template", durationMs: templated.durationMs, timestamp: templated.timestamp, error: templated.error });
+        if (templated.error) {
+          neighbourhoodNote = `template apply failed: ${templated.error}`;
+          console.log(`[s9] ${neighbourhoodNote} — continuing without neighbourhood`);
+        } else {
+          templatedLanguageAddress = templated.data?.address || templated.data?.hash || null;
+          if (!templatedLanguageAddress) {
+            neighbourhoodNote = "template apply returned no address";
+            console.log(`[s9] ${neighbourhoodNote} — continuing without neighbourhood`);
+          } else {
+            console.log(`[s9] Templated language: ${templatedLanguageAddress}`);
+            const pub = await client.publishNeighbourhood(uuid, templatedLanguageAddress, { links: [] });
+            samples.push({ name: "neighbourhood_publish", durationMs: pub.durationMs, timestamp: pub.timestamp, error: pub.error });
+            if (pub.error) {
+              neighbourhoodNote = `neighbourhood publish failed: ${pub.error}`;
+              console.log(`[s9] ${neighbourhoodNote} — continuing without neighbourhood`);
+            } else {
+              neighbourhoodPublished = true;
+              linkLanguageAddress = templatedLanguageAddress;
+              console.log(`[s9] Neighbourhood published: ${pub.data}`);
+            }
+          }
         }
       }
     }
 
     sampleRss("setup");
 
-    // ── Phase 2: passive subscriber connected before seeding ─────────
+    // ── Phase 2: passive subscriber before seeding ──────────────────
     let subscriber: PassiveSubscriber | null = null;
     try {
       subscriber = await openPassiveSubscriber(port, adminToken);
@@ -226,16 +282,13 @@ export const s9NeighbourhoodMemoryLeak: Scenario = {
     } catch (err: any) {
       console.log(`[s9] Passive subscriber failed: ${err.message} — continuing without it`);
     }
-
     sampleRss("setup");
-
-    // Give the conductor a moment to settle before we hammer it.
     await sleep(1000);
 
-    // ── Phase 3: seed 10k links ──────────────────────────────────────
+    // ── Phase 3: seed 10k links ─────────────────────────────────────
     console.log(`[s9] Seeding ${SEED_LINK_COUNT} links (${Math.ceil(SEED_LINK_COUNT / SEED_BATCH_SIZE)} batches of ${SEED_BATCH_SIZE})...`);
     const seedStart = performance.now();
-    let seedLinkLatencies: number[] = [];
+    const seedLinkLatencies: number[] = [];
     let seedErrors = 0;
     let lastRssSampleAt = performance.now();
 
@@ -248,34 +301,35 @@ export const s9NeighbourhoodMemoryLeak: Scenario = {
       );
       seedLinkLatencies.push(r.durationMs);
       if (r.error) seedErrors++;
-
       if ((i + 1) % SEED_BATCH_SIZE === 0) {
-        const batchIdx = Math.floor(i / SEED_BATCH_SIZE);
         const recent = seedLinkLatencies.slice(-SEED_BATCH_SIZE);
         const avg = recent.reduce((a, b) => a + b, 0) / recent.length;
+        const batchIdx = Math.floor(i / SEED_BATCH_SIZE);
         console.log(`[s9]   batch ${batchIdx + 1}/${Math.ceil(SEED_LINK_COUNT / SEED_BATCH_SIZE)}: avg=${avg.toFixed(1)}ms, total=${i + 1}`);
       }
-
       if (performance.now() - lastRssSampleAt >= RSS_SAMPLE_INTERVAL_MS) {
         sampleRss("seed");
         lastRssSampleAt = performance.now();
       }
     }
-
     const seedDurationMs = performance.now() - seedStart;
     sampleRss("seed");
     samples.push({ name: "seed_phase", durationMs: seedDurationMs, timestamp: Date.now() });
     console.log(`[s9] Seed complete: ${SEED_LINK_COUNT - seedErrors}/${SEED_LINK_COUNT} links in ${(seedDurationMs / 1000).toFixed(1)}s`);
 
-    // Let the conductor + pubsub flush any in-flight work before we
-    // start measuring steady-state growth.
-    await sleep(3000);
-    sampleRss("seed");
+    // ── Phase 4: settle (no activity) ───────────────────────────────
+    console.log(`[s9] Settle phase: ${SETTLE_DURATION_MS / 1000}s of idle...`);
+    const subEventsBeforeSettle = subscriber?.linkAddedCount ?? 0;
+    const settleStart = performance.now();
+    while (performance.now() - settleStart < SETTLE_DURATION_MS) {
+      sampleRss("settle");
+      await sleep(RSS_SAMPLE_INTERVAL_MS);
+    }
+    sampleRss("settle");
 
-    const linksAtMonitorStart = subscriber?.linkAddedCount ?? 0;
-
-    // ── Phase 4: monitor steady-state for several minutes ────────────
-    console.log(`[s9] Monitoring RSS for ${MONITOR_DURATION_MS / 1000}s under light steady-state load...`);
+    // ── Phase 5: monitor (light steady-state load) ──────────────────
+    console.log(`[s9] Monitor phase: ${MONITOR_DURATION_MS / 1000}s under light load...`);
+    const subEventsBeforeMonitor = subscriber?.linkAddedCount ?? 0;
     const monitorStart = performance.now();
     const monitorLinkLatencies: number[] = [];
     const monitorQueryLatencies: number[] = [];
@@ -287,57 +341,60 @@ export const s9NeighbourhoodMemoryLeak: Scenario = {
 
     while (performance.now() - monitorStart < MONITOR_DURATION_MS) {
       const elapsed = performance.now() - monitorStart;
-
       if (elapsed - lastLinkAt >= MONITOR_LINK_INTERVAL_MS) {
         lastLinkAt = elapsed;
-        const r = await client.addLink(
-          uuid,
-          `ad4m://s9-monitor/${monitorLinkCount % 50}`,
-          "flux://has_message",
-          `literal://monitor-${monitorLinkCount}`
-        );
+        const r = await client.addLink(uuid, `ad4m://s9-monitor/${monitorLinkCount % 50}`, "flux://has_message", `literal://monitor-${monitorLinkCount}`);
         monitorLinkLatencies.push(r.durationMs);
         monitorLinkCount++;
       }
-
       if (elapsed - lastQueryAt >= MONITOR_QUERY_INTERVAL_MS) {
         lastQueryAt = elapsed;
         const r = await client.queryLinks(uuid, { predicate: "flux://has_message" });
         monitorQueryLatencies.push(r.durationMs);
         monitorQueryCount++;
-        samples.push({ name: `monitor_query_${monitorQueryCount}`, durationMs: r.durationMs, timestamp: r.timestamp, error: r.error });
       }
-
       if (elapsed - lastRssAt >= RSS_SAMPLE_INTERVAL_MS) {
         lastRssAt = elapsed;
         sampleRss("monitor");
       }
-
       await sleep(100);
     }
-
     sampleRss("monitor");
     const monitorDurationMs = performance.now() - monitorStart;
     samples.push({ name: "monitor_phase", durationMs: monitorDurationMs, timestamp: Date.now() });
 
-    const linksAtMonitorEnd = subscriber?.linkAddedCount ?? 0;
-    const subscriberMonitorEvents = linksAtMonitorEnd - linksAtMonitorStart;
+    const subEventsAfterMonitor = subscriber?.linkAddedCount ?? 0;
 
-    // ── Teardown ─────────────────────────────────────────────────────
+    // ── Phase 6: cooldown (no activity) ─────────────────────────────
+    console.log(`[s9] Cooldown phase: ${COOLDOWN_DURATION_MS / 1000}s of idle...`);
+    const cooldownStart = performance.now();
+    while (performance.now() - cooldownStart < COOLDOWN_DURATION_MS) {
+      sampleRss("cooldown");
+      await sleep(RSS_SAMPLE_INTERVAL_MS);
+    }
+    sampleRss("cooldown");
+
     subscriber?.close();
 
-    // ── Analysis ─────────────────────────────────────────────────────
-    const monitorSamples = rssSamples.filter((s) => s.phase === "monitor");
-    const slopeKbPerMs = linearSlope(monitorSamples.map((s) => ({ x: s.elapsedMs, y: s.rssKb })));
-    const leakRateMbPerMin = (slopeKbPerMs * 60_000) / 1024;
+    // ── Analysis: separate slopes per phase ─────────────────────────
+    const phaseSamples = (p: Phase) => rssSamples.filter((s) => s.phase === p);
+    const slopeFor = (p: Phase) => {
+      const ss = phaseSamples(p);
+      if (ss.length < 2) return { slopeKbPerMin: 0, mbPerMin: 0, samples: ss.length, verdict: classify(0, ss.length) };
+      const slopeKbPerMs = linearSlope(ss.map((s) => ({ x: s.elapsedMs, y: s.rssKb })));
+      const kbPerMin = slopeKbPerMs * 60_000;
+      const mbPerMin = kbPerMin / 1024;
+      return {
+        slopeKbPerMin: Math.round(kbPerMin),
+        mbPerMin: Math.round(mbPerMin * 100) / 100,
+        samples: ss.length,
+        verdict: classify(Math.abs(mbPerMin), ss.length),
+      };
+    };
 
-    let verdict: "stable" | "slow_growth" | "leaking" | "insufficient_data" = "insufficient_data";
-    if (monitorSamples.length >= 4) {
-      const absMb = Math.abs(leakRateMbPerMin);
-      if (absMb < 0.25) verdict = "stable";
-      else if (absMb < LEAK_THRESHOLD_MB_PER_MIN) verdict = "slow_growth";
-      else verdict = "leaking";
-    }
+    const settleStats = slopeFor("settle");
+    const monitorStats = slopeFor("monitor");
+    const cooldownStats = slopeFor("cooldown");
 
     const avg = (a: number[]) => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0);
     const p95 = (a: number[]) => {
@@ -348,22 +405,29 @@ export const s9NeighbourhoodMemoryLeak: Scenario = {
 
     const firstSetup = rssSamples.find((s) => s.phase === "setup");
     const lastSeed = [...rssSamples].reverse().find((s) => s.phase === "seed");
+    const firstSettle = rssSamples.find((s) => s.phase === "settle");
+    const lastSettle = [...rssSamples].reverse().find((s) => s.phase === "settle");
     const firstMonitor = rssSamples.find((s) => s.phase === "monitor");
     const lastMonitor = [...rssSamples].reverse().find((s) => s.phase === "monitor");
+    const firstCooldown = rssSamples.find((s) => s.phase === "cooldown");
+    const lastCooldown = [...rssSamples].reverse().find((s) => s.phase === "cooldown");
 
     const metrics = {
+      mode,
       neighbourhood: {
         published: neighbourhoodPublished,
+        linkLanguageAddress,
         templatedLanguageAddress,
         note: neighbourhoodNote || null,
       },
       subscriber: {
         connected: subscriber !== null,
         linkAddedEventsTotal: subscriber?.linkAddedCount ?? 0,
-        linkAddedEventsDuringMonitor: subscriberMonitorEvents,
+        eventsDuringSettle: (subEventsBeforeMonitor) - (subEventsBeforeSettle),
+        eventsDuringMonitor: subEventsAfterMonitor - subEventsBeforeMonitor,
         expectedMonitorEvents: monitorLinkCount,
         deliveryRatio: monitorLinkCount > 0
-          ? Math.round((subscriberMonitorEvents / monitorLinkCount) * 1000) / 1000
+          ? Math.round(((subEventsAfterMonitor - subEventsBeforeMonitor) / monitorLinkCount) * 1000) / 1000
           : null,
       },
       seed: {
@@ -384,31 +448,38 @@ export const s9NeighbourhoodMemoryLeak: Scenario = {
         p95QueryMs: Math.round(p95(monitorQueryLatencies) * 100) / 100,
       },
       rss: {
-        samples: rssSamples.map((s) => ({
-          elapsedMs: Math.round(s.elapsedMs),
-          rssKb: s.rssKb,
-          phase: s.phase,
-        })),
+        samples: rssSamples.map((s) => ({ elapsedMs: Math.round(s.elapsedMs), rssKb: s.rssKb, phase: s.phase })),
         setupKb: firstSetup?.rssKb ?? null,
         postSeedKb: lastSeed?.rssKb ?? null,
+        settleStartKb: firstSettle?.rssKb ?? null,
+        settleEndKb: lastSettle?.rssKb ?? null,
         monitorStartKb: firstMonitor?.rssKb ?? null,
         monitorEndKb: lastMonitor?.rssKb ?? null,
-        monitorSlopeKbPerMin: Math.round(slopeKbPerMs * 60_000),
-        monitorLeakRateMbPerMin: Math.round(leakRateMbPerMin * 100) / 100,
-        verdict,
+        cooldownStartKb: firstCooldown?.rssKb ?? null,
+        cooldownEndKb: lastCooldown?.rssKb ?? null,
+        settle: settleStats,
+        monitor: monitorStats,
+        cooldown: cooldownStats,
         leakThresholdMbPerMin: LEAK_THRESHOLD_MB_PER_MIN,
+        verdict: monitorStats.verdict,
+        // Kept for back-compat with prior result files / aggregators.
+        monitorSlopeKbPerMin: monitorStats.slopeKbPerMin,
+        monitorLeakRateMbPerMin: monitorStats.mbPerMin,
       },
     };
 
     const endTime = Date.now();
-    const summaryParts = [
-      neighbourhoodPublished ? "neighbourhood=published" : `neighbourhood=local (${neighbourhoodNote})`,
+    const mb = (kb: number | null | undefined) => kb != null ? (kb / 1024).toFixed(0) : "?";
+    const summary = [
+      `mode=${mode}`,
+      neighbourhoodPublished ? "nbh=published" : `nbh=skipped (${neighbourhoodNote})`,
       `seed=${metrics.seed.successful}/${SEED_LINK_COUNT}`,
-      `monitor=${(monitorDurationMs / 1000).toFixed(0)}s, ${monitorLinkCount} links`,
-      `RSS: ${firstMonitor ? (firstMonitor.rssKb / 1024).toFixed(0) : "?"}MB → ${lastMonitor ? (lastMonitor.rssKb / 1024).toFixed(0) : "?"}MB`,
-      `leak=${metrics.rss.monitorLeakRateMbPerMin}MB/min (${verdict})`,
-      `sub events=${subscriberMonitorEvents}/${monitorLinkCount}`,
-    ];
+      `settle=${settleStats.mbPerMin}MB/min`,
+      `monitor=${monitorStats.mbPerMin}MB/min (${monitorStats.verdict})`,
+      `cooldown=${cooldownStats.mbPerMin}MB/min`,
+      `RSS: setup=${mb(firstSetup?.rssKb)} seed=${mb(lastSeed?.rssKb)} monStart=${mb(firstMonitor?.rssKb)} monEnd=${mb(lastMonitor?.rssKb)} cool=${mb(lastCooldown?.rssKb)} MB`,
+      `subEvents=${subEventsAfterMonitor - subEventsBeforeMonitor}/${monitorLinkCount}`,
+    ].join(" | ");
 
     return {
       scenario: "s9-neighbourhood-memory-leak",
@@ -418,7 +489,7 @@ export const s9NeighbourhoodMemoryLeak: Scenario = {
       durationMs: endTime - startTime,
       metrics,
       samples,
-      summary: summaryParts.join(" | "),
+      summary,
     };
   },
 };

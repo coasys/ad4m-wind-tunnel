@@ -15,6 +15,8 @@ export interface ExecutorConfig {
   adminToken: string;
   adamRepoPath: string;
   buildDir: string;
+  /** Extra CLI args appended to the `run` invocation (e.g. ["--language-language-only","true"]). */
+  extraArgs?: string[];
 }
 
 export interface ExecutorInstance {
@@ -112,6 +114,7 @@ export async function startExecutor(
     "--run-dapp-server", "false",
     "--hc-use-bootstrap", "false",
     "--hc-use-proxy", "false",
+    ...(config.extraArgs ?? []),
   ], {
     stdio: ["pipe", "pipe", "pipe"],
     env: { ...process.env, RUST_LOG: "info" },
