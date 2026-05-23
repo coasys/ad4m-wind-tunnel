@@ -118,10 +118,14 @@ function linearSlope(points: { x: number; y: number }[]): number {
   return denom === 0 ? 0 : (n * sxy - sx * sy) / denom;
 }
 
-function classify(absMbPerMin: number, sampleCount: number): "stable" | "slow_growth" | "leaking" | "insufficient_data" {
+// Only POSITIVE slope counts as a leak — negative slope means RSS dropped
+// during the phase (e.g. jemalloc background decay releasing freed pages),
+// which is the desired behavior. Treating |slope| > threshold as a leak
+// false-flagged healthy release phases.
+function classify(mbPerMin: number, sampleCount: number): "stable" | "slow_growth" | "leaking" | "insufficient_data" {
   if (sampleCount < 4) return "insufficient_data";
-  if (absMbPerMin < 0.25) return "stable";
-  if (absMbPerMin < LEAK_THRESHOLD_MB_PER_MIN) return "slow_growth";
+  if (mbPerMin <= 0.25) return "stable";
+  if (mbPerMin < LEAK_THRESHOLD_MB_PER_MIN) return "slow_growth";
   return "leaking";
 }
 
@@ -393,7 +397,7 @@ export const s9NeighbourhoodMemoryLeak: Scenario = {
         slopeKbPerMin: Math.round(kbPerMin),
         mbPerMin: Math.round(mbPerMin * 100) / 100,
         samples: ss.length,
-        verdict: classify(Math.abs(mbPerMin), ss.length),
+        verdict: classify(mbPerMin, ss.length),
       };
     };
 
