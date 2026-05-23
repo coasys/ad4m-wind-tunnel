@@ -18,3 +18,4 @@ export { s10SubscriptionFanout } from "./s10-subscription-fanout.js";
 export { s12PersistenceColdQuery } from "./s12-persistence-cold-query.js";
 export { s13ReadWriteMix } from "./s13-read-write-mix.js";
 export { s14MultiPerspectiveLoad } from "./s14-multi-perspective-load.js";
+export { s15LeakAttribution } from "./s15-leak-attribution.js";

@@ -42,6 +42,23 @@ npm install
 | S7 | Memory Stability | RSS growth over sustained workload (5 min run) |
 | S8 | Subject Class Queries | Realistic Flux community graph + SPARQL/link query benchmarks |
 | S9 | Neighbourhood Memory Leak | 10k-link neighbourhood perspective + active WS subscription, RSS regression over multi-minute steady-state |
+| S15 | Leak Attribution | Fast 3-phase RSS slope split between idle / writes / writes+queries to pinpoint which path leaks |
+
+##### S9/S15 fast-mode env vars
+
+For iteration speed, both scenarios respect duration env vars:
+
+```bash
+# S9 (default settle=60s, monitor=300s, cooldown=30s ≈ 7 min/mode)
+S9_SETTLE_SEC=30 S9_MONITOR_SEC=120 S9_COOLDOWN_SEC=15 ...   # ~3 min/mode
+S9_MODE=holochain|centralized|local|no-languages
+S9_MONITOR_QUERY_SEC=30     # query period during monitor (set huge to skip)
+
+# S15 (default phase=90s ≈ 5 min total)
+S15_SEED=2000 S15_PHASE_SEC=60 S15_RSS_INTERVAL_SEC=2 ...    # ~3.5 min
+```
+
+For absolute-number leak measurement use the serial S9 sweep (4 modes × 7 min ≈ 30 min). For inner-loop dev iteration prefer S15 (~5 min total, attributes the leak to write vs query path).
 | M1 | Neighbourhood Sync | Dual-executor neighbourhood create/join/sync |
 | M2 | Multi-Executor Scale | 3 executors, cross-interference measurement |
 | M3 | Link Language Comparison | Docker infra startup + local baseline comparison |
