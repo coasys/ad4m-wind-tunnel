@@ -6,7 +6,7 @@ How each AD4M link language compares across protocol characteristics, security p
 
 |  | Holochain | Matrix | Nostr | AT Proto | IPFS | Solid | Hypercore | ActivityPub | NextGraph |
 |--|-----------|--------|-------|----------|------|-------|-----------|-------------|----------|
-| **Repo** | [p-diff-sync](https://github.com/coasys/ad4m/tree/dev/bootstrap-languages/p-diff-sync) | [matrix](https://github.com/HexaField/matrix-link-language) | [nostr](https://github.com/HexaField/nostr-link-language) | [atproto](https://github.com/HexaField/atproto-link-language) | [ipfs](https://github.com/HexaField/ipfs-link-language) | [solid](https://github.com/HexaField/solid-link-language) | [hypercore](https://github.com/HexaField/hypercore-link-language) | [ap](https://github.com/HexaField/ap-link-language) | [nextgraph](https://github.com/HexaField/nextgraph-link-language) |
+| **Repo** | [p-diff-sync](https://github.com/coasys/ad4m/tree/dev/bootstrap-languages/p-diff-sync) | [matrix](https://github.com/coasys/matrix-link-language) | [nostr](https://github.com/coasys/nostr-link-language) | [atproto](https://github.com/coasys/atproto-link-language) | [ipfs](https://github.com/coasys/ipfs-link-language) | [solid](https://github.com/coasys/solid-link-language) | [hypercore](https://github.com/coasys/hypercore-link-language) | [ap](https://github.com/coasys/ap-link-language) | [nextgraph](https://github.com/coasys/nextgraph-link-language) |
 | **Runtime** | WASM (Holochain) | Deno (ALDK) | Deno (ALDK) | Deno (ALDK) | Deno (ALDK) | Deno (ALDK) | Deno (ALDK) | Deno (ALDK) | Deno (ALDK) |
 | **Status** | Production | Verified | Verified | Verified | Verified | Verified | Verified | Verified | Alpha |
 

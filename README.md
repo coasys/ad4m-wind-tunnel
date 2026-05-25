@@ -94,14 +94,14 @@ Proves each AD4M link language correctly reads/writes to its native protocol bac
 
 | Protocol | Repo | Transport | Native App |
 |----------|------|-----------|------------|
-| **Matrix** | [matrix-link-language](https://github.com/HexaField/matrix-link-language) | HTTP (Client-Server API) | [Element](https://app.element.io) |
-| **Nostr** | [nostr-link-language](https://github.com/HexaField/nostr-link-language) | Native WebSocket + BIP-340 Schnorr | [Snort](https://snort.social) |
-| **AT Protocol** | [atproto-link-language](https://github.com/HexaField/atproto-link-language) | HTTP (XRPC) | [Bluesky](https://bsky.app) |
-| **IPFS** | [ipfs-link-language](https://github.com/HexaField/ipfs-link-language) | HTTP (Kubo API) | [IPFS Desktop](https://docs.ipfs.tech/install/ipfs-desktop/) |
-| **Solid** | [solid-link-language](https://github.com/HexaField/solid-link-language) | HTTP (LDP) | [Penny](https://penny.vincenttunru.com/) |
-| **Hypercore** | [hypercore-link-language](https://github.com/HexaField/hypercore-link-language) | HTTP → sidecar gateway | [hyp CLI](https://docs.holepunch.to/) |
-| **ActivityPub** | [ap-link-language](https://github.com/HexaField/ap-link-language) | HTTP (AP federation) | [Mastodon](https://joinmastodon.org) |
-| **NextGraph** | [nextgraph-link-language](https://github.com/HexaField/nextgraph-link-language) | Websockets | [NextGraph](https://nextgraph.org/) |
+| **Matrix** | [matrix-link-language](https://github.com/coasys/matrix-link-language) | HTTP (Client-Server API) | [Element](https://app.element.io) |
+| **Nostr** | [nostr-link-language](https://github.com/coasys/nostr-link-language) | Native WebSocket + BIP-340 Schnorr | [Snort](https://snort.social) |
+| **AT Protocol** | [atproto-link-language](https://github.com/coasys/atproto-link-language) | HTTP (XRPC) | [Bluesky](https://bsky.app) |
+| **IPFS** | [ipfs-link-language](https://github.com/coasys/ipfs-link-language) | HTTP (Kubo API) | [IPFS Desktop](https://docs.ipfs.tech/install/ipfs-desktop/) |
+| **Solid** | [solid-link-language](https://github.com/coasys/solid-link-language) | HTTP (LDP) | [Penny](https://penny.vincenttunru.com/) |
+| **Hypercore** | [hypercore-link-language](https://github.com/coasys/hypercore-link-language) | HTTP → sidecar gateway | [hyp CLI](https://docs.holepunch.to/) |
+| **ActivityPub** | [ap-link-language](https://github.com/coasys/ap-link-language) | HTTP (AP federation) | [Mastodon](https://joinmastodon.org) |
+| **NextGraph** | [nextgraph-link-language](https://github.com/coasys/nextgraph-link-language) | Websockets | [NextGraph](https://nextgraph.org/) |
 | **Holochain** | [p-diff-sync](https://github.com/coasys/ad4m/tree/dev/bootstrap-languages/p-diff-sync) | Kitsune (Iroh) | [Holochain Launcher](https://www.holochain.org/) |
 
 See [`CAPABILITIES.md`](CAPABILITIES.md) for a full capability matrix across all 8 languages.
