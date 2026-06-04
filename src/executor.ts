@@ -4,9 +4,41 @@
  */
 
 import { spawn, ChildProcess, execSync } from "child_process";
-import { mkdirSync, existsSync, writeFileSync, rmSync } from "fs";
+import { mkdirSync, existsSync, writeFileSync, rmSync, readFileSync, copyFileSync, statSync } from "fs";
+import { homedir, tmpdir } from "os";
 import { join } from "path";
 import WebSocket from "ws";
+
+/**
+ * The snapshot is determined by whichever `deno_runtime` git revision is
+ * resolved by `Cargo.lock`. Cache it keyed by that revision so subsequent
+ * branches with the same Deno pin reuse the same bytes, and so multi-branch
+ * comparison runs only pay the snapshot cost once per Deno version.
+ */
+function snapshotCacheDir(): string {
+  const base = process.env.XDG_CACHE_HOME || join(homedir(), ".cache");
+  const dir = join(base, "ad4m-wind-tunnel", "deno-snapshots");
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+/** Parse the resolved git revision for `deno_runtime` from a Cargo.lock file. */
+function denoRuntimeRevision(buildDir: string): string | null {
+  const lockPath = join(buildDir, "Cargo.lock");
+  if (!existsSync(lockPath)) return null;
+  const lock = readFileSync(lockPath, "utf8");
+  // Each [[package]] block is small; find the one named deno_runtime and
+  // pull the trailing `#<sha>` from its `source = "git+...#<sha>"` line.
+  const match = lock.match(
+    /\[\[package\]\][\s\S]*?name\s*=\s*"deno_runtime"[\s\S]*?source\s*=\s*"git\+[^"#]+#([0-9a-f]+)"/
+  );
+  return match ? match[1] : null;
+}
+
+function snapshotIsValid(p: string): boolean {
+  // Empty file = stub seed; treat as invalid so we always regen on miss.
+  return existsSync(p) && statSync(p).size > 0;
+}
 
 export interface ExecutorConfig {
   branch: string;
@@ -48,21 +80,57 @@ export async function buildExecutor(config: ExecutorConfig): Promise<string> {
     writeFileSync(join(dappDir, "index.html"), "<!DOCTYPE html><html><body></body></html>");
   }
 
-  // Copy CUSTOM_DENO_SNAPSHOT.bin
-  const snapshotSrc = join(adamRepoPath, "CUSTOM_DENO_SNAPSHOT.bin");
-  if (existsSync(snapshotSrc)) {
-    console.log(`[executor] Copying CUSTOM_DENO_SNAPSHOT.bin...`);
-    // Put in both root and rust-executor/ to cover both include_bytes paths
-    execSync(`cp "${snapshotSrc}" "${join(buildDir, "CUSTOM_DENO_SNAPSHOT.bin")}"`, { stdio: "pipe" });
-    execSync(`cp "${snapshotSrc}" "${join(buildDir, "rust-executor", "CUSTOM_DENO_SNAPSHOT.bin")}"`, { stdio: "pipe" });
-  }
+  // `CUSTOM_DENO_SNAPSHOT.bin` is consumed by `include_bytes!` in
+  // `js_core/options.rs`, so the file must exist at compile time. Its content
+  // also has to match the linked `deno_runtime`'s V8 — a mismatch causes the
+  // executor to panic at language-runtime init with
+  // `Check failed: magic_number_ == SerializedData::kMagicNumber`.
+  //
+  // The snapshot is fully determined by whichever `deno_runtime` git
+  // revision the branch's `Cargo.lock` resolves to, so we cache it keyed by
+  // that revision under `$XDG_CACHE_HOME/ad4m-wind-tunnel/deno-snapshots/`.
+  // Multi-branch runs whose Cargo.lock all point at the same Deno commit
+  // pay the snapshot cost once and copy thereafter.
+  const snapshotRootPath = join(buildDir, "CUSTOM_DENO_SNAPSHOT.bin");
+  const snapshotRustExecutorPath = join(buildDir, "rust-executor", "CUSTOM_DENO_SNAPSHOT.bin");
 
-  // Copy schema.gql if needed
+  const denoRev = denoRuntimeRevision(buildDir);
+  const cachePath = denoRev
+    ? join(snapshotCacheDir(), `${denoRev}.bin`)
+    : null;
+
+  // Copy schema.gql if needed (must precede `cargo run`, which compiles core/).
   const schemaSrc = join(adamRepoPath, "core", "lib", "src", "schema.gql");
   if (existsSync(schemaSrc)) {
     const schemaTarget = join(buildDir, "core", "lib", "src");
     mkdirSync(schemaTarget, { recursive: true });
     execSync(`cp "${schemaSrc}" "${join(schemaTarget, "schema.gql")}"`, { stdio: "pipe" });
+  }
+
+  if (cachePath && snapshotIsValid(cachePath)) {
+    console.log(`[executor] Using cached snapshot for deno_runtime ${denoRev!.slice(0, 12)}`);
+    copyFileSync(cachePath, snapshotRootPath);
+    copyFileSync(cachePath, snapshotRustExecutorPath);
+  } else {
+    // Seed a stub so `include_bytes!` compiles the snapshot generator, then
+    // run the generator to write real bytes against the build's own deno deps.
+    writeFileSync(snapshotRootPath, "");
+    writeFileSync(snapshotRustExecutorPath, "");
+    console.log(
+      cachePath
+        ? `[executor] Generating snapshot for deno_runtime ${denoRev!.slice(0, 12)}...`
+        : `[executor] Generating snapshot (Cargo.lock deno_runtime revision unresolved)...`
+    );
+    execSync("cargo run --release --bin generate_snapshot 2>&1", {
+      cwd: join(buildDir, "rust-executor"),
+      stdio: "pipe",
+      timeout: 1800000,
+    });
+    copyFileSync(snapshotRustExecutorPath, snapshotRootPath);
+    if (cachePath) {
+      copyFileSync(snapshotRustExecutorPath, cachePath);
+      console.log(`[executor] Cached snapshot at ${cachePath}`);
+    }
   }
 
   // Build the executor
