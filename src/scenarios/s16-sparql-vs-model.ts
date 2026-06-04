@@ -456,6 +456,82 @@ export const s16SparqlVsModel: Scenario = {
         () => client.modelQuery(uuid, "Topic", JSON.stringify({})),
       ));
 
+      // ----- Case 6: All embeddings, withMetadata=false (audit item A) -----
+      // Same query as case 4 but caller opts out of the reifier-metadata
+      // join.  Expected: scan-all ratio collapses ~3x (we no longer pay
+      // the three triple-pattern matches per row for author/timestamp).
+      cases.push(await timeBoth(client, uuid, "embeddings_all_no_metadata", RUNS,
+        () => client.querySparql(uuid, `
+          SELECT ?e ?vec WHERE {
+            ?e <${P.ENTRY_TYPE}> <${T.Embedding}> .
+            ?e <${P.EMBEDDING}> ?vec .
+          }
+        `),
+        () => client.modelQuery(uuid, "Embedding", JSON.stringify({
+          withMetadata: false,
+        })),
+      ));
+
+      // ----- Case 7: SR by expression with limit, count=false (audit item B) -----
+      // Same query as case 1 but caller opts out of the COUNT round trip.
+      // Expected: ~0.1ms cheaper per call.  The count would have been
+      // wasted work for a callsite that only reads `instances[0]`.
+      cases.push(await timeBoth(client, uuid, "sr_by_expression_limit1_no_count", RUNS,
+        () => client.querySparql(uuid, `
+          SELECT ?embedding WHERE {
+            ?sr <${P.ENTRY_TYPE}> <${T.SemanticRelationship}> .
+            ?sr <${P.HAS_EXPRESSION}> <${sampleItem}> .
+            ?sr <${P.HAS_TAG}> ?embeddingId .
+            ?embeddingId <${P.ENTRY_TYPE}> <${T.Embedding}> .
+            ?embeddingId <${P.EMBEDDING}> ?embedding .
+          } LIMIT 1
+        `),
+        () => client.modelQuery(uuid, "SemanticRelationship", JSON.stringify({
+          where: { expression: sampleItem },
+          limit: 1,
+          count: false,
+        })),
+      ));
+
+      // ----- Case 8: SR by id (single-plan WHERE-selective, audit item C) -----
+      // Looking up an SR by id with no limit/offset triggers C: the
+      // executor sees the WHERE caps the result set to one row and
+      // skips the TwoPhase pagination plan entirely.  Expected: same
+      // performance as a Single plan lookup (no timestamp probe overhead).
+      const sampleSrId = graph.srIds[Math.floor(graph.srIds.length / 2)];
+      cases.push(await timeBoth(client, uuid, "sr_by_id_single_plan", RUNS,
+        () => client.querySparql(uuid, `
+          SELECT ?expression ?tag WHERE {
+            <${sampleSrId}> <${P.ENTRY_TYPE}> <${T.SemanticRelationship}> .
+            <${sampleSrId}> <${P.HAS_EXPRESSION}> ?expression .
+            <${sampleSrId}> <${P.HAS_TAG}> ?tag .
+          }
+        `),
+        () => client.modelQuery(uuid, "SemanticRelationship", JSON.stringify({
+          where: { id: sampleSrId },
+          limit: 1,
+          count: false,
+          withMetadata: false,
+        })),
+      ));
+
+      // ----- Case 9: SR scan with everything off (A+B combined) -----
+      // The "naked" model query: no reifier metadata, no count, no
+      // pagination.  Should land within ~1.5–2× of raw SPARQL.
+      cases.push(await timeBoth(client, uuid, "sr_all_no_metadata_no_count", RUNS,
+        () => client.querySparql(uuid, `
+          SELECT ?sr ?expression ?tag WHERE {
+            ?sr <${P.ENTRY_TYPE}> <${T.SemanticRelationship}> .
+            ?sr <${P.HAS_EXPRESSION}> ?expression .
+            ?sr <${P.HAS_TAG}> ?tag .
+          }
+        `),
+        () => client.modelQuery(uuid, "SemanticRelationship", JSON.stringify({
+          withMetadata: false,
+          count: false,
+        })),
+      ));
+
       // ----- Detect whether include actually fired -----
       // If avg of case 2 is within 5% of case 1, include is a no-op.
       const c1 = cases[0].model.avg;
