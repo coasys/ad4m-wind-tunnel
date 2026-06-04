@@ -15,7 +15,7 @@ import {
   a1McpThroughput,
   s9NeighbourhoodMemoryLeak,
   s10SubscriptionFanout, s12PersistenceColdQuery, s13ReadWriteMix, s14MultiPerspectiveLoad,
-  s15LeakAttribution,
+  s15LeakAttribution, s16SparqlVsModel,
 } from "./scenarios/index.js";
 import { consoleReport, jsonReport, comparisonReport } from "./reporters.js";
 import { config, validateAdamRepo } from "./config.js";
@@ -30,7 +30,7 @@ const ALL_SCENARIOS: Scenario[] = [
   a1McpThroughput,
   s9NeighbourhoodMemoryLeak,
   s10SubscriptionFanout, s12PersistenceColdQuery, s13ReadWriteMix, s14MultiPerspectiveLoad,
-  s15LeakAttribution,
+  s15LeakAttribution, s16SparqlVsModel,
 ];
 
 function parseArgs() {
