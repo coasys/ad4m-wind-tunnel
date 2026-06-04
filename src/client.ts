@@ -176,6 +176,52 @@ export class InstrumentedClient {
     );
   }
 
+  async addSdna(
+    perspectiveUuid: string,
+    name: string,
+    shaclJson: string,
+    sdnaType: "subject_class" | "flow" = "subject_class",
+    sdnaCode = ""
+  ): Promise<TimedResult<any>> {
+    return this.timed(() =>
+      this.wsCall("perspective.addSdna", {
+        uuid: perspectiveUuid,
+        name,
+        sdnaCode,
+        sdnaType,
+        shaclJson,
+      })
+    );
+  }
+
+  async modelQuery(
+    perspectiveUuid: string,
+    className: string,
+    queryJson: string
+  ): Promise<TimedResult<any>> {
+    return this.timed(() =>
+      this.wsCall("perspective.modelQuery", {
+        uuid: perspectiveUuid,
+        class_name: className,
+        query_json: queryJson,
+      })
+    );
+  }
+
+  async addLinks(
+    perspectiveUuid: string,
+    links: { source: string; predicate: string; target: string }[],
+    status: "Shared" | "Local" = "Shared"
+  ): Promise<TimedResult<any>> {
+    return this.timed(() =>
+      this.wsCall("perspective.addLinks", {
+        uuid: perspectiveUuid,
+        links,
+        status,
+      })
+    );
+  }
+
   async publishLanguage(
     languagePath: string,
     languageMeta: { name: string; description?: string; sourceCodeLink?: string; possibleTemplateParams?: string[] }
