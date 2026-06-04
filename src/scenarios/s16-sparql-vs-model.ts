@@ -54,50 +54,82 @@ const T = {
 // semantic-relationship}. Inline here so this scenario doesn't need to
 // cross-import flux's TypeScript source.
 
+// The Rust executor's `SHACLShape` deserializer (`shacl_parser.rs`) ignores
+// any top-level field outside `{ target_class, properties, constructor_actions,
+// destructor_actions }`. Relations therefore have to live as PropertyShape
+// entries with `relation_kind` set — the v1 of this scenario put them in a
+// separate `relations: []` array, which silently dropped them and made the
+// "include never fires" finding a false positive. Fixed below.
+//
+// `@Flag` is canonical SHACL: `has_value` + `min_count >= 1` — the Rust
+// loader detects flags structurally from that pair.
+function flagProp(name: string, predicate: string, initial: string) {
+  return {
+    path: predicate,
+    name,
+    node_kind: "IRI",
+    min_count: 1,
+    max_count: 1,
+    has_value: initial,
+  };
+}
+
 const SHACL_EMBEDDING = JSON.stringify({
   target_class: "flux://Embedding",
   properties: [
-    { path: P.ENTRY_TYPE, name: "type", datatype: "xsd://string", required: true, flag: true, initial_value: T.Embedding },
+    flagProp("type", P.ENTRY_TYPE, T.Embedding),
     { path: P.EMBEDDING, name: "embedding", datatype: "xsd://string" },
     { path: P.EMBEDDING_MODEL, name: "model", datatype: "xsd://string", resolve_language: "literal" },
   ],
-  relations: [],
 });
 
 const SHACL_TOPIC = JSON.stringify({
   target_class: "flux://Topic",
   properties: [
-    { path: P.ENTRY_TYPE, name: "type", datatype: "xsd://string", required: true, flag: true, initial_value: T.Topic },
+    flagProp("type", P.ENTRY_TYPE, T.Topic),
     { path: P.TOPIC, name: "topic", datatype: "xsd://string", resolve_language: "literal" },
   ],
-  relations: [],
 });
 
 const SHACL_MESSAGE = JSON.stringify({
   target_class: "flux://Message",
   properties: [
-    { path: P.ENTRY_TYPE, name: "type", datatype: "xsd://string", required: true, flag: true, initial_value: T.Message },
+    flagProp("type", P.ENTRY_TYPE, T.Message),
     { path: P.BODY, name: "body", datatype: "xsd://string" },
     { path: P.AUTHOR, name: "author", datatype: "xsd://string" },
     { path: P.TIMESTAMP, name: "timestamp", datatype: "xsd://string" },
   ],
-  relations: [],
 });
 
 const SHACL_SR = JSON.stringify({
   target_class: "flux://SemanticRelationship",
   properties: [
-    { path: P.ENTRY_TYPE, name: "type", datatype: "xsd://string", required: true, flag: true, initial_value: T.SemanticRelationship },
+    flagProp("type", P.ENTRY_TYPE, T.SemanticRelationship),
     { path: P.HAS_EXPRESSION, name: "expression", datatype: "xsd://string" },
     { path: P.HAS_TAG, name: "tag", datatype: "xsd://string" },
     { path: P.HAS_RELEVANCE, name: "relevance", datatype: "xsd://integer", resolve_language: "literal" },
-  ],
-  relations: [
-    // Two @HasOne on the same predicate — the conformance filter on the
-    // target class's @Flag is supposed to discriminate. The bench
-    // surfaces whether the executor actually honours this.
-    { name: "embeddingTag", predicate: P.HAS_TAG, target_class_name: "Embedding", kind: "hasOne" },
-    { name: "topicTag", predicate: P.HAS_TAG, target_class_name: "Topic", kind: "hasOne" },
+    // Two @HasOne on the same `flux://has_tag` predicate, expressed as
+    // PropertyShape entries with `relation_kind: "hasOne"` — the Rust
+    // shape loader registers them in `include_relations` only when emitted
+    // this way. Whether the executor's `include` pipeline actually
+    // honours conformance-based discrimination across two same-predicate
+    // relations targeting different classes is what the bench surfaces.
+    {
+      path: P.HAS_TAG,
+      name: "embeddingTag",
+      node_kind: "IRI",
+      max_count: 1,
+      relation_kind: "hasOne",
+      target_class_name: "Embedding",
+    },
+    {
+      path: P.HAS_TAG,
+      name: "topicTag",
+      node_kind: "IRI",
+      max_count: 1,
+      relation_kind: "hasOne",
+      target_class_name: "Topic",
+    },
   ],
 });
 
