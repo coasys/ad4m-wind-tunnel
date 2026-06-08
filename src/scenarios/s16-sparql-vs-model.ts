@@ -532,6 +532,83 @@ export const s16SparqlVsModel: Scenario = {
         })),
       ));
 
+      // ----- Case 10: depth-1 include with CONSTRUCT (audit item I) -----
+      // Exercises the CONSTRUCT-based subgraph hydration path.  Compared
+      // against the same query without `useConstruct`, the model SPARQL
+      // for a depth-1 include collapses from a recursive 1+1=2 round-trip
+      // sequence (main SELECT → include SELECT) to one CONSTRUCT that
+      // materialises the entire subgraph in one round trip.  Expected
+      // win: ~30-50% on the with_include case at medium scale.
+      cases.push(await timeBoth(client, uuid, "sr_by_expression_with_include_construct", RUNS,
+        () => client.querySparql(uuid, `
+          SELECT ?embedding WHERE {
+            ?sr <${P.ENTRY_TYPE}> <${T.SemanticRelationship}> .
+            ?sr <${P.HAS_EXPRESSION}> <${sampleItem}> .
+            ?sr <${P.HAS_TAG}> ?embeddingId .
+            ?embeddingId <${P.ENTRY_TYPE}> <${T.Embedding}> .
+            ?embeddingId <${P.EMBEDDING}> ?embedding .
+          } LIMIT 1
+        `),
+        () => client.modelQuery(uuid, "SemanticRelationship", JSON.stringify({
+          where: { expression: sampleItem },
+          include: { embeddingTag: true },
+          limit: 1,
+          withMetadata: false,
+          count: false,
+          useConstruct: true,
+        })),
+      ));
+
+      // ----- Case 11: SR-all + include via CONSTRUCT (audit item I) -----
+      // The harder case: full SR scan with embeddingTag include.  Compared
+      // against `sr_by_expression_with_include` (which limits to 1 result),
+      // this engages the CONSTRUCT path for a multi-row result so the
+      // walker has to group + reassemble at meaningful scale.
+      cases.push(await timeBoth(client, uuid, "sr_all_with_include_construct", RUNS,
+        () => client.querySparql(uuid, `
+          SELECT ?sr ?embedding WHERE {
+            ?sr <${P.ENTRY_TYPE}> <${T.SemanticRelationship}> .
+            ?sr <${P.HAS_TAG}> ?embeddingId .
+            ?embeddingId <${P.ENTRY_TYPE}> <${T.Embedding}> .
+            ?embeddingId <${P.EMBEDDING}> ?embedding .
+          }
+        `),
+        () => client.modelQuery(uuid, "SemanticRelationship", JSON.stringify({
+          include: { embeddingTag: true },
+          withMetadata: false,
+          count: false,
+          useConstruct: true,
+        })),
+      ));
+
+      // ----- Case 12: multi-count projection (audit item H) -----
+      // Two count projections on the same instance.  Pre-#846+H this fires
+      // two separate SPARQL queries; post-H both fold into one fused SELECT
+      // with two sub-SELECT count blocks joined by OPTIONAL.  Expected win:
+      // half the round-trip count, so roughly half the model_query latency
+      // on the projection step.
+      //
+      // Each Conversation projection counts via a relation on the model
+      // (we use Topic's lack of relations so we pick SR with two projections
+      // over `embeddingTag` and `topicTag` — both same predicate, just for
+      // shape).
+      cases.push(await timeBoth(client, uuid, "multi_projection", RUNS,
+        () => client.querySparql(uuid, `
+          SELECT ?sr (COUNT(DISTINCT ?tag) AS ?n) WHERE {
+            ?sr <${P.ENTRY_TYPE}> <${T.SemanticRelationship}> .
+            ?sr <${P.HAS_TAG}> ?tag .
+          } GROUP BY ?sr
+        `),
+        () => client.modelQuery(uuid, "SemanticRelationship", JSON.stringify({
+          include: {
+            $tagCount: { from: "embeddingTag", count: true },
+            $topicCount: { from: "topicTag", count: true },
+          },
+          withMetadata: false,
+          count: false,
+        })),
+      ));
+
       // ----- Detect whether include actually fired -----
       // If avg of case 2 is within 5% of case 1, include is a no-op.
       const c1 = cases[0].model.avg;
