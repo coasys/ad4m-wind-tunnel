@@ -83,6 +83,24 @@ export async function startCluster(opts: CascadeClusterOptions): Promise<Cascade
   const gossipBasePort = opts.gossipBasePort ?? 24000;
   const nodes: CascadeNode[] = [];
 
+  // Defensive pre-cleanup: if a prior cascade run leaked, leftover
+  // executors hold the WS port and waitForHealth ends up connecting
+  // to the OLD executor whose data dir we just wiped — confusingly
+  // surfacing as `user.create timed out`.  Force-kill any straggler
+  // listening on the ports we're about to claim.
+  for (let i = 0; i < opts.nodeCount; i++) {
+    const wsPort = wsBasePort + i;
+    const gossipPort = gossipBasePort + i;
+    for (const port of [wsPort, gossipPort]) {
+      try {
+        execSync(`fuser -k -KILL ${port}/tcp 2>/dev/null || true`, { stdio: "pipe" });
+      } catch {
+        /* fuser exits non-zero if no process held the port — fine */
+      }
+    }
+  }
+  await sleep(500);
+
   // Pre-compute node identities so each one can be passed the full
   // peer list at spawn time.
   const plannedNodes = Array.from({ length: opts.nodeCount }, (_, i) => ({
@@ -161,6 +179,27 @@ export async function startCluster(opts: CascadeClusterOptions): Promise<Cascade
         try {
           n.process.kill("SIGTERM");
         } catch {}
+      }
+      // Wait for SIGTERM to take effect — ad4m-executor's holochain
+      // shutdown can take a few seconds.  Then force-kill anything
+      // still alive so the next test run gets a clean port + lair-
+      // keystore.  Without this, leftover executors hold ports 13000+
+      // and the next startCluster() races against a partially-wiped
+      // data dir, producing the very confusing "user.create timeout"
+      // because the wind tunnel actually connects to the OLD executor.
+      const settleMs = 3000;
+      const settleStart = Date.now();
+      while (Date.now() - settleStart < settleMs) {
+        const anyAlive = nodes.some((n) => n.process.exitCode === null);
+        if (!anyAlive) break;
+        await sleep(200);
+      }
+      for (const n of nodes) {
+        if (n.process.exitCode === null) {
+          try {
+            n.process.kill("SIGKILL");
+          } catch {}
+        }
       }
       await sleep(500);
       for (const n of nodes) {
