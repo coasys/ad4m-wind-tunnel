@@ -18,6 +18,7 @@ import {
   disconnectClusterPeers,
   ClusterPeerSession,
 } from "../users.js";
+import { wireRenegotiation, RenegotiationWire } from "../renegotiation.js";
 
 const ROOM_NAME = "s2-sfu-cascade-4node";
 const NEIGHBOURHOOD = `windtunnel://s2`;
@@ -36,7 +37,12 @@ export const s2SfuCascade4Node: Scenario = {
     const metrics: Record<string, unknown> = {};
 
     let cluster: Awaited<ReturnType<typeof startCluster>> | null = null;
-    const peers: { peer: WebRtcPeer; node: CascadeNode; session: ClusterPeerSession }[] = [];
+    const peers: {
+      peer: WebRtcPeer;
+      node: CascadeNode;
+      session: ClusterPeerSession;
+      wire: RenegotiationWire;
+    }[] = [];
     let clusterSessions: ClusterPeerSession[] = [];
 
     try {
@@ -109,7 +115,19 @@ export const s2SfuCascade4Node: Scenario = {
           landed = target;
         }
         await peer.acceptAnswer(JSON.parse(session.sdpAnswer));
-        peers.push({ peer, node: landed, session: cs });
+        // Subscribe to server-pushed renegotiation on whichever node
+        // the peer landed on, so download bytes from co-located peers
+        // are received.
+        const landedEntry = cs.byNode.get(landed.did)!;
+        const wire = await wireRenegotiation({
+          client: landedEntry.client,
+          peer,
+          token: landedEntry.token,
+          port: landed.port,
+          neighbourhoodUrl: NEIGHBOURHOOD,
+          roomName: ROOM_NAME,
+        });
+        peers.push({ peer, node: landed, session: cs, wire });
         counts[landed.did]++;
       }
 
@@ -127,7 +145,24 @@ export const s2SfuCascade4Node: Scenario = {
         durationMs: Date.now() - startTime,
         timestamp: Date.now(),
       });
+
+      // Settle + measure intra-node download bandwidth so we can
+      // assert that the renegotiation pipeline is alive on each
+      // cascade node.  Cross-node media flow needs Phase F.
+      await sleep(2000);
+      peers.forEach(({ peer: p }) => p.startStats());
+      await sleep(15_000);
+      peers.forEach(({ peer: p }) => p.stopStats());
+      const downloads = peers.map(({ peer: p }) => p.getLastStats()?.bytesReceived ?? 0);
+      metrics["downloadBytesPerPeer"] = downloads;
+      metrics["downloadMean"] = mean(downloads);
+      metrics["renegotiationsAppliedPerPeer"] = peers.map((p) => p.wire.count());
     } finally {
+      for (const { wire } of peers) {
+        try {
+          await wire.detach();
+        } catch {}
+      }
       for (const { peer, node, session } of peers) {
         try {
           await session.byNode.get(node.did)!.client.call("sfu.callLeave", {
@@ -159,7 +194,15 @@ export const s2SfuCascade4Node: Scenario = {
       summary:
         `S2: 4-node cascade — peers=${PEER_COUNT}, total=${metrics["totalLanded"]}, ` +
         `[min=${metrics["minPerNodeActual"]}, max=${metrics["maxPerNodeActual"]}] ` +
-        `(ok=${metrics["distributionOk"]})`,
+        `downloadMean=${metrics["downloadMean"]}B (ok=${metrics["distributionOk"]})`,
     };
   },
 };
+
+function mean(arr: number[]): number {
+  return arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : 0;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
