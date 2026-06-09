@@ -130,18 +130,15 @@ export async function startCluster(opts: CascadeClusterOptions): Promise<Cascade
 
     const client = new InstrumentedClient({ port: planned.port, adminToken: ADMIN_TOKEN });
     await client.connect();
-    // agent.generate is heavy (key derivation + language load) — give
-    // it up to 120s and tolerate "already exists" on re-runs.  user.create
-    // depends on a generated agent, so we MUST block here.
-    const gen = await Promise.race([
-      client.generateAgent("wind-tunnel-cascade"),
-      sleep(120_000).then(() => ({ error: "agent.generate timeout (120s)" })),
-    ]);
-    if (gen && (gen as any).error && !/already/i.test((gen as any).error)) {
-      throw new Error(
-        `cascade: node ${planned.id} agent.generate failed: ${(gen as any).error}`,
-      );
-    }
+    // In multi-user mode the cascade scenarios drive everything via
+    // `user.create` + `user.login` + per-user JWTs (see
+    // `provisionClusterPeers`).  `sfu.startRoom` is admin-token-only
+    // and doesn't resolve a caller DID.  None of those code paths
+    // require the executor's main agent, so we deliberately do NOT
+    // run `agent.generate` here — on multi-node loopback clusters it
+    // hangs (Holochain init contends across nodes) and there's nothing
+    // gained by waiting.  Single-node SFU scenarios run their own
+    // `agent.generate` from `run-webrtc.ts`.
 
     nodes.push({
       id: planned.id,
