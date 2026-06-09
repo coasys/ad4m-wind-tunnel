@@ -106,7 +106,7 @@ export class InstrumentedClient {
           this.pendingRequests.delete(id);
           reject(new Error(`WS request ${method} timed out`));
         }
-      }, 30000);
+      }, 120000);
     });
   }
 
