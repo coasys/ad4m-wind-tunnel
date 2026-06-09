@@ -14,7 +14,7 @@
  * The wind tunnel TCP transport is one of several backends.
  */
 
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, openSync, writeSync, closeSync } from "node:fs";
 import { spawn, execSync, ChildProcess } from "node:child_process";
 
 import { InstrumentedClient } from "./client.js";
@@ -144,12 +144,29 @@ export async function startCluster(opts: CascadeClusterOptions): Promise<Cascade
       args.push("--sfu-cascade-peers", peerEntries);
     }
 
-    spawnedProcs.push(
-      spawn(BIN, args, {
-        stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, RUST_LOG: "info" },
-      }),
-    );
+    // Capture executor stdout+stderr to per-node log files — when
+    // agent.generate or user.create hangs on a cascade node, the
+    // executor log is the only place we can see what state it's
+    // wedged on.  Otherwise stdout/stderr just buffer into the
+    // ChildProcess pipes and we never read them.
+    const proc = spawn(BIN, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, RUST_LOG: "info" },
+    });
+    const logPath = `/tmp/ad4m-cascade-node-${i}.log`;
+    try {
+      const fd = openSync(logPath, "w");
+      proc.stdout?.on("data", (d) => writeSync(fd, d));
+      proc.stderr?.on("data", (d) => writeSync(fd, d));
+      proc.on("close", () => {
+        try {
+          closeSync(fd);
+        } catch {}
+      });
+    } catch (e) {
+      console.warn(`[cascade] failed to open ${logPath}:`, e);
+    }
+    spawnedProcs.push(proc);
   }
 
   // Wait for every node's HTTP health endpoint in parallel.
