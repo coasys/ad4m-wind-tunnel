@@ -111,12 +111,17 @@ export async function startCluster(opts: CascadeClusterOptions): Promise<Cascade
     did: `did:windtunnel:cascade:node-${i}`,
   }));
 
+  // Spawn every node first so the gossip mesh can form before any
+  // node tries to do heavy init (agent.generate needs main-key
+  // creation; user.login needs that main key).  Doing the
+  // spawn → wait-health pass concurrently across nodes is fine since
+  // each binds a different port.
+  const spawnedProcs: ChildProcess[] = [];
+  const spawnedClients: InstrumentedClient[] = [];
   for (let i = 0; i < plannedNodes.length; i++) {
     const planned = plannedNodes[i];
     initDataDir(planned.dataPath);
 
-    // Every other node's `did=host:port` entries — what the gossip
-    // CLI flag expects.
     const peerEntries = plannedNodes
       .filter((_, j) => j !== i)
       .map((p) => `${p.did}=127.0.0.1:${p.gossipPort}`)
@@ -139,32 +144,54 @@ export async function startCluster(opts: CascadeClusterOptions): Promise<Cascade
       args.push("--sfu-cascade-peers", peerEntries);
     }
 
-    const proc = spawn(BIN, args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, RUST_LOG: "info" },
-    });
+    spawnedProcs.push(
+      spawn(BIN, args, {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, RUST_LOG: "info" },
+      }),
+    );
+  }
 
-    await waitForHealth(planned.port);
+  // Wait for every node's HTTP health endpoint in parallel.
+  await Promise.all(plannedNodes.map((p) => waitForHealth(p.port)));
 
-    const client = new InstrumentedClient({ port: planned.port, adminToken: ADMIN_TOKEN });
-    await client.connect();
-    // In multi-user mode the cascade scenarios drive everything via
-    // `user.create` + `user.login` + per-user JWTs (see
-    // `provisionClusterPeers`).  `sfu.startRoom` is admin-token-only
-    // and doesn't resolve a caller DID.  None of those code paths
-    // require the executor's main agent, so we deliberately do NOT
-    // run `agent.generate` here — on multi-node loopback clusters it
-    // hangs (Holochain init contends across nodes) and there's nothing
-    // gained by waiting.  Single-node SFU scenarios run their own
-    // `agent.generate` from `run-webrtc.ts`.
+  // Connect admin clients in parallel.
+  for (const planned of plannedNodes) {
+    const c = new InstrumentedClient({ port: planned.port, adminToken: ADMIN_TOKEN });
+    spawnedClients.push(c);
+  }
+  await Promise.all(spawnedClients.map((c) => c.connect()));
 
+  // Run agent.generate on every node in PARALLEL — this is the
+  // expensive bit (main-key creation + language load).  Running it
+  // sequentially used to take 60+s × nodeCount on Josh; running in
+  // parallel completes in roughly one node's worth of time because
+  // the Holochain initialisation is mostly disk-bound, not contended.
+  // Tolerate "already exists" so re-runs are idempotent.
+  await Promise.all(
+    spawnedClients.map(async (c, i) => {
+      const planned = plannedNodes[i];
+      const gen = await Promise.race([
+        c.generateAgent("wind-tunnel-cascade"),
+        sleep(180_000).then(() => ({ error: "agent.generate timeout (180s)" })),
+      ]);
+      if (gen && (gen as any).error && !/already/i.test((gen as any).error)) {
+        throw new Error(
+          `cascade: node ${planned.id} agent.generate failed: ${(gen as any).error}`,
+        );
+      }
+    }),
+  );
+
+  for (let i = 0; i < plannedNodes.length; i++) {
+    const planned = plannedNodes[i];
     nodes.push({
       id: planned.id,
       port: planned.port,
       gossipPort: planned.gossipPort,
       dataPath: planned.dataPath,
-      process: proc,
-      client,
+      process: spawnedProcs[i],
+      client: spawnedClients[i],
       did: planned.did,
     });
   }
