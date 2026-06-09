@@ -1,29 +1,31 @@
 /**
- * T6: cross-node pipe transport handshake (Phase E).
+ * T6: cross-node pipe transport handshake + media (Phases E + F).
  *
- * Boots a 2-node SFU cluster with TCP gossip, has a peer join on each
- * node for the same neighbourhood + room, then waits for the cascade
- * gossip to fire the auto-establish flow.  The test asserts that:
+ * Boots a 2-node SFU cluster with TCP gossip, joins one peer on each
+ * node for the same room, and verifies:
  *
  *   1. Both nodes see each other in `sfu.cascadeStatus.pipes` — i.e.
  *      the gossip-driven `PipeOffer` / `PipeAnswer` handshake actually
- *      ran end-to-end.
- *   2. The pipe-key carries the expected room id + remote DID on each
- *      side (we don't yet forward media across the pipe — that's the
- *      follow-up to migrate pipes into the server's peer map — but the
- *      handshake is the load-bearing piece for everything else).
+ *      ran end-to-end (Phase E).
+ *   2. Each peer subscribes to the server-pushed renegotiation events
+ *      so its RTCPeerConnection picks up the cross-node track once the
+ *      pipe carries it.
+ *   3. After 12 s of steady-state media, at least one peer reports
+ *      `bytesReceived > 0` — proof that bytes peer-A→SFU-1→pipe→
+ *      SFU-2→peer-B reach the destination (Phase F).
  *
  * The two nodes share a single physical machine via loopback TCP
  * gossip; the executor's `--sfu-local-did` flag distinguishes them.
  * Tie-break: the lexically-higher DID is the dialer, so we explicitly
- * use `did:windtunnel:t6:node-a` and `did:windtunnel:t6:node-b` so
- * `node-b > node-a` and node-b drives establish_pipe.
+ * use `did:windtunnel:cascade:node-0` / `did:windtunnel:cascade:node-1`
+ * so node-1 drives establish_pipe.
  */
 
 import { Scenario, ScenarioContext, ScenarioResult } from "../scenario.js";
 import { WebRtcPeer } from "../peer.js";
 import { startCluster } from "../cascade.js";
 import { provisionClusterPeers, disconnectClusterPeers } from "../users.js";
+import { wireRenegotiation, RenegotiationWire } from "../renegotiation.js";
 
 const ROOM_NAME = "t6-pipe-handshake";
 const NEIGHBOURHOOD = `windtunnel://t6`;
@@ -86,6 +88,7 @@ export const t6PipeHandshake: Scenario = {
       });
 
       const peers: WebRtcPeer[] = [];
+      const wires: RenegotiationWire[] = [];
       for (let i = 0; i < cluster.nodes.length; i++) {
         const node = cluster.nodes[i];
         const session = sessions[i];
@@ -96,6 +99,15 @@ export const t6PipeHandshake: Scenario = {
         const peer = new WebRtcPeer(session.label, { audioToneHz: 440 + i * 80 });
         await peer.attachSyntheticStream();
         peers.push(peer);
+        const wire = await wireRenegotiation({
+          client: entry.client,
+          peer,
+          token: entry.token,
+          port: node.port,
+          neighbourhoodUrl: NEIGHBOURHOOD,
+          roomName: ROOM_NAME,
+        });
+        wires.push(wire);
         const offer = await peer.createOffer();
         const joinResp = await entry.client.call<{
           sdpAnswer: string;
@@ -166,7 +178,27 @@ export const t6PipeHandshake: Scenario = {
       });
       metrics["linksValid"] = linksValid;
 
+      // Phase F: now that the pipe is up and each peer is subscribed
+      // to the renegotiation channel, let media flow for a window and
+      // measure cross-node bandwidth.  Each peer should see bytes from
+      // the OTHER peer arrive via the SFU→pipe→SFU path.
+      await sleep(2000);
+      peers.forEach((p) => p.startStats());
+      await sleep(12_000);
+      peers.forEach((p) => p.stopStats());
+      const uploads = peers.map((p) => p.getLastStats()?.bytesSent ?? 0);
+      const downloads = peers.map((p) => p.getLastStats()?.bytesReceived ?? 0);
+      metrics["uploadBytesPerPeer"] = uploads;
+      metrics["downloadBytesPerPeer"] = downloads;
+      metrics["uploadMean"] = mean(uploads);
+      metrics["downloadMean"] = mean(downloads);
+      metrics["renegotiationsAppliedPerPeer"] = wires.map((w) => w.count());
+      metrics["mediaAcrossPipeOk"] = downloads.some((b) => b > 0);
+
       // Tear peers down (best-effort).
+      for (const w of wires) {
+        try { await w.detach(); } catch {}
+      }
       for (let i = 0; i < peers.length; i++) {
         const node = cluster.nodes[i];
         const session = sessions[i];
@@ -193,8 +225,9 @@ export const t6PipeHandshake: Scenario = {
         metrics,
         samples,
         summary:
-          `T6: cascade pipe handshake — perNodePipeCounts=${JSON.stringify(perNodePipeCounts)} ` +
-          `succeeded=${handshakeSucceeded} linksValid=${linksValid} ` +
+          `T6: cascade — pipes=${JSON.stringify(perNodePipeCounts)} ` +
+          `linksValid=${linksValid} uploadMean=${metrics["uploadMean"]}B ` +
+          `downloadMean=${metrics["downloadMean"]}B mediaAcrossPipe=${metrics["mediaAcrossPipeOk"]} ` +
           `waitMs=${pipeWaitMs}`,
       };
     } finally {
@@ -204,6 +237,10 @@ export const t6PipeHandshake: Scenario = {
     }
   },
 };
+
+function mean(arr: number[]): number {
+  return arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : 0;
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
