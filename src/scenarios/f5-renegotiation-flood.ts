@@ -24,6 +24,7 @@ import { Scenario, ScenarioContext, ScenarioResult } from "../scenario.js";
 import { WebRtcPeer } from "../peer.js";
 import { InstrumentedClient } from "../client.js";
 import { provisionPeers, PeerSession } from "../users.js";
+import { wireRenegotiation, RenegotiationWire } from "../renegotiation.js";
 
 const ROOM_NAME = "f5-renegotiation-flood";
 const NEIGHBOURHOOD = `windtunnel://f5`;
@@ -33,6 +34,7 @@ const CHURN_CYCLES = 10; // each cycle = 1 leave + 1 new join
 interface F5Peer {
   peer: WebRtcPeer;
   session: PeerSession;
+  wire: RenegotiationWire;
 }
 
 export const f5RenegotiationFlood: Scenario = {
@@ -159,6 +161,14 @@ async function joinOne(
   });
   const peer = new WebRtcPeer(session.label, { audioToneHz: 440 + (idx % 20) * 10 });
   await peer.attachSyntheticStream();
+  const wire = await wireRenegotiation({
+    client: session.client,
+    peer,
+    token: session.token,
+    port,
+    neighbourhoodUrl: NEIGHBOURHOOD,
+    roomName: ROOM_NAME,
+  });
   const offer = await peer.createOffer();
   const joinResp = await session.client.call<{
     sdpAnswer: string;
@@ -171,7 +181,7 @@ async function joinOne(
     sdpOffer: JSON.stringify(offer),
   });
   await peer.acceptAnswer(JSON.parse(joinResp.sdpAnswer));
-  return { peer, session };
+  return { peer, session, wire };
 }
 
 async function leaveOne(f5peer: F5Peer): Promise<void> {
@@ -180,6 +190,9 @@ async function leaveOne(f5peer: F5Peer): Promise<void> {
       neighbourhoodUrl: NEIGHBOURHOOD,
       roomName: ROOM_NAME,
     });
+  } catch {}
+  try {
+    await f5peer.wire.detach();
   } catch {}
   try {
     await f5peer.peer.close();

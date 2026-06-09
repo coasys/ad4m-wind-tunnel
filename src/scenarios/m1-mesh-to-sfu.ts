@@ -23,6 +23,7 @@ import { Scenario, ScenarioContext, ScenarioResult } from "../scenario.js";
 import { MeshHost, connectAll } from "../mesh.js";
 import { WebRtcPeer } from "../peer.js";
 import { provisionPeers, disconnectPeers } from "../users.js";
+import { wireRenegotiation, RenegotiationWire } from "../renegotiation.js";
 
 const ROOM_NAME = "m1-mesh-to-sfu";
 const MAX_MESH = 4;
@@ -92,12 +93,22 @@ export const m1MeshToSfu: Scenario = {
 
     const transitionStart = Date.now();
     const sfuPeers: WebRtcPeer[] = [];
+    const wires: RenegotiationWire[] = [];
     try {
       for (let i = 0; i < sessions.length; i++) {
         const s = sessions[i];
         const peer = new WebRtcPeer(s.label, { audioToneHz: 440 + i * 50 });
         await peer.attachSyntheticStream();
         sfuPeers.push(peer);
+        const wire = await wireRenegotiation({
+          client: s.client,
+          peer,
+          token: s.token,
+          port: ctx.port,
+          neighbourhoodUrl,
+          roomName: ROOM_NAME,
+        });
+        wires.push(wire);
         const offer = await peer.createOffer();
         const joinResp = await s.client.call<{
           sdpAnswer: string;
@@ -137,6 +148,11 @@ export const m1MeshToSfu: Scenario = {
         (metrics["sfuUploadMean"] as number) / (metrics["meshUploadMean"] as number)
       ).toFixed(2);
     } finally {
+      for (const w of wires) {
+        try {
+          await w.detach();
+        } catch {}
+      }
       for (let i = 0; i < sfuPeers.length; i++) {
         try {
           await sessions[i]?.client.call("sfu.callLeave", {

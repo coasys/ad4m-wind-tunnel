@@ -19,6 +19,7 @@ import { Scenario, ScenarioContext, ScenarioResult } from "../scenario.js";
 import { MeshHost, connectAll } from "../mesh.js";
 import { WebRtcPeer } from "../peer.js";
 import { provisionPeers, disconnectPeers } from "../users.js";
+import { wireRenegotiation, RenegotiationWire } from "../renegotiation.js";
 
 const ROOM_NAME = "m2-sfu-to-mesh";
 const NEIGHBOURHOOD = `windtunnel://m2`;
@@ -67,12 +68,22 @@ export const m2SfuToMesh: Scenario = {
     });
 
     const sfuPeers: WebRtcPeer[] = [];
+    const wires: RenegotiationWire[] = [];
     try {
       for (let i = 0; i < sessions.length; i++) {
         const s = sessions[i];
         const peer = new WebRtcPeer(s.label, { audioToneHz: 440 + i * 50 });
         await peer.attachSyntheticStream();
         sfuPeers.push(peer);
+        const wire = await wireRenegotiation({
+          client: s.client,
+          peer,
+          token: s.token,
+          port: ctx.port,
+          neighbourhoodUrl: NEIGHBOURHOOD,
+          roomName: ROOM_NAME,
+        });
+        wires.push(wire);
         const offer = await peer.createOffer();
         const joinResp = await s.client.call<{
           sdpAnswer: string;
@@ -100,12 +111,16 @@ export const m2SfuToMesh: Scenario = {
       const leavingCount = SFU_PEER_COUNT - FINAL_MESH_COUNT;
       const leavingPeers = sfuPeers.splice(0, leavingCount);
       const leavingSessions = sessions.splice(0, leavingCount);
+      const leavingWires = wires.splice(0, leavingCount);
       for (let i = 0; i < leavingPeers.length; i++) {
         try {
           await leavingSessions[i].client.call("sfu.callLeave", {
             neighbourhoodUrl: NEIGHBOURHOOD,
             roomName: ROOM_NAME,
           });
+        } catch {}
+        try {
+          await leavingWires[i].detach();
         } catch {}
         await leavingPeers[i].close().catch(() => {});
       }
@@ -128,9 +143,13 @@ export const m2SfuToMesh: Scenario = {
             roomName: ROOM_NAME,
           });
         } catch {}
+        try {
+          await wires[i].detach();
+        } catch {}
         await sfuPeers[i].close().catch(() => {});
       }
       sfuPeers.length = 0;
+      wires.length = 0;
 
       const meshHosts: MeshHost[] = [
         new MeshHost("m2-mesh-a", { audioToneHz: 440 + 3 * 50 }),

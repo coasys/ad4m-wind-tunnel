@@ -17,6 +17,7 @@ import { Scenario, ScenarioContext, ScenarioResult } from "../scenario.js";
 import { WebRtcPeer } from "../peer.js";
 import { clearNet, setNetem, netAvailable } from "../net.js";
 import { provisionPeers, disconnectPeers } from "../users.js";
+import { wireRenegotiation, RenegotiationWire } from "../renegotiation.js";
 
 const ROOM_NAME = "f2-sfu-packet-loss";
 const NEIGHBOURHOOD = `windtunnel://f2`;
@@ -80,12 +81,22 @@ export const f2SfuPacketLoss: Scenario = {
     });
 
     const peers: WebRtcPeer[] = [];
+    const wires: RenegotiationWire[] = [];
     try {
       for (let i = 0; i < sessions.length; i++) {
         const s = sessions[i];
         const peer = new WebRtcPeer(s.label, { audioToneHz: 440 + i * 40 });
         await peer.attachSyntheticStream();
         peers.push(peer);
+        const wire = await wireRenegotiation({
+          client: s.client,
+          peer,
+          token: s.token,
+          port: ctx.port,
+          neighbourhoodUrl: NEIGHBOURHOOD,
+          roomName: ROOM_NAME,
+        });
+        wires.push(wire);
         const offer = await peer.createOffer();
         const joinResp = await s.client.call<{
           sdpAnswer: string;
@@ -127,6 +138,11 @@ export const f2SfuPacketLoss: Scenario = {
       });
     } finally {
       clearNet();
+      for (const w of wires) {
+        try {
+          await w.detach();
+        } catch {}
+      }
       for (let i = 0; i < peers.length; i++) {
         try {
           await sessions[i]?.client.call("sfu.callLeave", {
