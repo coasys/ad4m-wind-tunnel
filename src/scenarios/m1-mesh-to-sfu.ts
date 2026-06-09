@@ -22,6 +22,7 @@
 import { Scenario, ScenarioContext, ScenarioResult } from "../scenario.js";
 import { MeshHost, connectAll } from "../mesh.js";
 import { WebRtcPeer } from "../peer.js";
+import { provisionPeers, disconnectPeers } from "../users.js";
 
 const ROOM_NAME = "m1-mesh-to-sfu";
 const MAX_MESH = 4;
@@ -82,15 +83,23 @@ export const m1MeshToSfu: Scenario = {
     await Promise.all(meshHosts.map((h) => h.close().catch(() => {})));
     await client.call("sfu.startRoom", { neighbourhoodUrl, roomName: ROOM_NAME });
 
+    const sessions = await provisionPeers({
+      admin: client,
+      port: ctx.port,
+      count: MAX_MESH + 1,
+      labelPrefix: "m1-sfu",
+    });
+
     const transitionStart = Date.now();
     const sfuPeers: WebRtcPeer[] = [];
     try {
-      for (let i = 0; i < MAX_MESH + 1; i++) {
-        const peer = new WebRtcPeer(`sfu-${i}`, { audioToneHz: 440 + i * 50 });
+      for (let i = 0; i < sessions.length; i++) {
+        const s = sessions[i];
+        const peer = new WebRtcPeer(s.label, { audioToneHz: 440 + i * 50 });
         await peer.attachSyntheticStream();
         sfuPeers.push(peer);
         const offer = await peer.createOffer();
-        const session = await client.call<{
+        const joinResp = await s.client.call<{
           sdpAnswer: string;
           participantId: string;
           redirectTo?: string;
@@ -99,12 +108,11 @@ export const m1MeshToSfu: Scenario = {
           neighbourhoodUrl,
           roomName: ROOM_NAME,
           sdpOffer: JSON.stringify(offer),
-          agentDidOverride: `did:windtunnel:m1:peer-${i}`,
         });
-        if (session.redirectTo) {
-          throw new Error(`M1 unexpected cascade redirect to ${session.redirectTo}`);
+        if (joinResp.redirectTo) {
+          throw new Error(`M1 unexpected cascade redirect to ${joinResp.redirectTo}`);
         }
-        await peer.acceptAnswer(JSON.parse(session.sdpAnswer));
+        await peer.acceptAnswer(JSON.parse(joinResp.sdpAnswer));
       }
       const transitionMs = Date.now() - transitionStart;
       metrics["transitionMs"] = transitionMs;
@@ -129,14 +137,21 @@ export const m1MeshToSfu: Scenario = {
         (metrics["sfuUploadMean"] as number) / (metrics["meshUploadMean"] as number)
       ).toFixed(2);
     } finally {
-      for (const peer of sfuPeers) {
+      for (let i = 0; i < sfuPeers.length; i++) {
         try {
-          await peer.close();
+          await sessions[i]?.client.call("sfu.callLeave", {
+            neighbourhoodUrl,
+            roomName: ROOM_NAME,
+          });
+        } catch {}
+        try {
+          await sfuPeers[i].close();
         } catch {}
       }
       try {
         await client.call("sfu.stopRoom", { neighbourhoodUrl, roomName: ROOM_NAME });
       } catch {}
+      await disconnectPeers(sessions);
     }
 
     const endTime = Date.now();

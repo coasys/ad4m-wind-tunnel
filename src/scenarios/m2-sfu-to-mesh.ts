@@ -18,6 +18,7 @@
 import { Scenario, ScenarioContext, ScenarioResult } from "../scenario.js";
 import { MeshHost, connectAll } from "../mesh.js";
 import { WebRtcPeer } from "../peer.js";
+import { provisionPeers, disconnectPeers } from "../users.js";
 
 const ROOM_NAME = "m2-sfu-to-mesh";
 const NEIGHBOURHOOD = `windtunnel://m2`;
@@ -58,17 +59,22 @@ export const m2SfuToMesh: Scenario = {
     }
 
     // Phase A: 5 peers on SFU.
+    const sessions = await provisionPeers({
+      admin: client,
+      port: ctx.port,
+      count: SFU_PEER_COUNT,
+      labelPrefix: "m2-sfu",
+    });
+
     const sfuPeers: WebRtcPeer[] = [];
-    const sfuDids: string[] = [];
     try {
-      for (let i = 0; i < SFU_PEER_COUNT; i++) {
-        const peer = new WebRtcPeer(`m2-sfu-${i}`, { audioToneHz: 440 + i * 50 });
+      for (let i = 0; i < sessions.length; i++) {
+        const s = sessions[i];
+        const peer = new WebRtcPeer(s.label, { audioToneHz: 440 + i * 50 });
         await peer.attachSyntheticStream();
         sfuPeers.push(peer);
-        const did = `did:windtunnel:m2:peer-${i}`;
-        sfuDids.push(did);
         const offer = await peer.createOffer();
-        const session = await client.call<{
+        const joinResp = await s.client.call<{
           sdpAnswer: string;
           participantId: string;
           redirectTo?: string;
@@ -77,9 +83,8 @@ export const m2SfuToMesh: Scenario = {
           neighbourhoodUrl: NEIGHBOURHOOD,
           roomName: ROOM_NAME,
           sdpOffer: JSON.stringify(offer),
-          agentDidOverride: did,
         });
-        await peer.acceptAnswer(JSON.parse(session.sdpAnswer));
+        await peer.acceptAnswer(JSON.parse(joinResp.sdpAnswer));
       }
 
       // Settle + measure SFU phase.
@@ -92,17 +97,17 @@ export const m2SfuToMesh: Scenario = {
       metrics["sfuUploadMean"] = mean(sfuUploads);
 
       // Phase B: 3 peers leave the SFU room, last 2 stay (for now).
-      const leaving = sfuPeers.splice(0, SFU_PEER_COUNT - FINAL_MESH_COUNT);
-      const leavingDids = sfuDids.splice(0, SFU_PEER_COUNT - FINAL_MESH_COUNT);
-      for (let i = 0; i < leaving.length; i++) {
+      const leavingCount = SFU_PEER_COUNT - FINAL_MESH_COUNT;
+      const leavingPeers = sfuPeers.splice(0, leavingCount);
+      const leavingSessions = sessions.splice(0, leavingCount);
+      for (let i = 0; i < leavingPeers.length; i++) {
         try {
-          await client.call("sfu.callLeave", {
+          await leavingSessions[i].client.call("sfu.callLeave", {
             neighbourhoodUrl: NEIGHBOURHOOD,
             roomName: ROOM_NAME,
-            agentDidOverride: leavingDids[i],
           });
         } catch {}
-        await leaving[i].close().catch(() => {});
+        await leavingPeers[i].close().catch(() => {});
       }
       await sleep(500);
 
@@ -114,19 +119,13 @@ export const m2SfuToMesh: Scenario = {
       metrics["sfuParticipantsAfterLeave"] =
         midRooms.find((r) => r.roomName === ROOM_NAME)?.participantCount ?? -1;
 
-      // Phase C: transition the remaining 2 from SFU → mesh.  In flux's
-      // SfuManager this is driven by `resolveTopology` returning "mesh"
-      // for the new count; the manager tears down its SFU PC and
-      // bootstraps the mesh WebRTCManager.  We mirror that here:
-      // sfu.callLeave for the remaining 2, close their SFU peers,
-      // build fresh MeshHosts and pair them.
+      // Phase C: transition the remaining 2 from SFU → mesh.
       const transitionStart = Date.now();
       for (let i = 0; i < sfuPeers.length; i++) {
         try {
-          await client.call("sfu.callLeave", {
+          await sessions[i].client.call("sfu.callLeave", {
             neighbourhoodUrl: NEIGHBOURHOOD,
             roomName: ROOM_NAME,
-            agentDidOverride: sfuDids[i],
           });
         } catch {}
         await sfuPeers[i].close().catch(() => {});
@@ -164,6 +163,7 @@ export const m2SfuToMesh: Scenario = {
       try {
         await client.call("sfu.stopRoom", { neighbourhoodUrl: NEIGHBOURHOOD, roomName: ROOM_NAME });
       } catch {}
+      await disconnectPeers(sessions);
     }
 
     const endTime = Date.now();

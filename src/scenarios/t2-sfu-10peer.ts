@@ -13,6 +13,7 @@
 
 import { Scenario, ScenarioContext, ScenarioResult } from "../scenario.js";
 import { WebRtcPeer, PeerStats } from "../peer.js";
+import { provisionPeers, disconnectPeers } from "../users.js";
 
 const ROOM_NAME = "t2-sfu-10peer";
 const PEER_COUNT = 10;
@@ -32,10 +33,18 @@ export const t2Sfu10Peer: Scenario = {
     metrics["neighbourhoodUrl"] = neighbourhoodUrl;
     await client.call("sfu.startRoom", { neighbourhoodUrl, roomName: ROOM_NAME });
 
+    const sessions = await provisionPeers({
+      admin: client,
+      port: ctx.port,
+      count: PEER_COUNT,
+      labelPrefix: "t2-peer",
+    });
+
     const peers: WebRtcPeer[] = [];
     try {
-      for (let i = 0; i < PEER_COUNT; i++) {
-        const peer = new WebRtcPeer(`peer-${i}`, {
+      for (let i = 0; i < sessions.length; i++) {
+        const session = sessions[i];
+        const peer = new WebRtcPeer(session.label, {
           audioToneHz: 440 + i * 20,
           recvSlots: PEER_COUNT - 1,
         });
@@ -44,7 +53,7 @@ export const t2Sfu10Peer: Scenario = {
 
         const offer = await peer.createOffer();
         const joinStart = Date.now();
-        const session = await client.call<{
+        const joinResp = await session.client.call<{
           sdpAnswer: string;
           participantId: string;
           redirectTo?: string;
@@ -53,21 +62,20 @@ export const t2Sfu10Peer: Scenario = {
           neighbourhoodUrl,
           roomName: ROOM_NAME,
           sdpOffer: JSON.stringify(offer),
-          agentDidOverride: `did:windtunnel:t2:peer-${i}`,
         });
         const joinElapsed = Date.now() - joinStart;
         samples.push({
-          name: `call_join_peer_${i}`,
+          name: `call_join_${session.label}`,
           durationMs: joinElapsed,
           timestamp: Date.now(),
         });
 
-        if (session.redirectTo) {
+        if (joinResp.redirectTo) {
           throw new Error(
-            `T2 expects a single-node SFU but got cascade redirect to ${session.redirectTo}`,
+            `T2 expects a single-node SFU but got cascade redirect to ${joinResp.redirectTo}`,
           );
         }
-        await peer.acceptAnswer(JSON.parse(session.sdpAnswer));
+        await peer.acceptAnswer(JSON.parse(joinResp.sdpAnswer));
       }
 
       await waitForServerParticipantCount(client, ROOM_NAME, PEER_COUNT, 30_000);
@@ -95,14 +103,21 @@ export const t2Sfu10Peer: Scenario = {
       const room = rooms.find((r) => r.roomName === ROOM_NAME);
       metrics["serverReportedParticipants"] = room?.participantCount ?? -1;
     } finally {
-      for (const peer of peers) {
+      for (let i = 0; i < peers.length; i++) {
         try {
-          await peer.close();
+          await sessions[i]?.client.call("sfu.callLeave", {
+            neighbourhoodUrl,
+            roomName: ROOM_NAME,
+          });
+        } catch {}
+        try {
+          await peers[i].close();
         } catch {}
       }
       try {
         await client.call("sfu.stopRoom", { neighbourhoodUrl, roomName: ROOM_NAME });
       } catch {}
+      await disconnectPeers(sessions);
     }
 
     const endTime = Date.now();

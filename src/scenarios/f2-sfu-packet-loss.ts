@@ -16,6 +16,7 @@
 import { Scenario, ScenarioContext, ScenarioResult } from "../scenario.js";
 import { WebRtcPeer } from "../peer.js";
 import { clearNet, setNetem, netAvailable } from "../net.js";
+import { provisionPeers, disconnectPeers } from "../users.js";
 
 const ROOM_NAME = "f2-sfu-packet-loss";
 const NEIGHBOURHOOD = `windtunnel://f2`;
@@ -71,17 +72,22 @@ export const f2SfuPacketLoss: Scenario = {
       throw e;
     }
 
+    const sessions = await provisionPeers({
+      admin: client,
+      port: ctx.port,
+      count: PEER_COUNT,
+      labelPrefix: "f2-peer",
+    });
+
     const peers: WebRtcPeer[] = [];
-    const peerDids: string[] = [];
     try {
-      for (let i = 0; i < PEER_COUNT; i++) {
-        const peer = new WebRtcPeer(`f2-peer-${i}`, { audioToneHz: 440 + i * 40 });
+      for (let i = 0; i < sessions.length; i++) {
+        const s = sessions[i];
+        const peer = new WebRtcPeer(s.label, { audioToneHz: 440 + i * 40 });
         await peer.attachSyntheticStream();
         peers.push(peer);
         const offer = await peer.createOffer();
-        const did = `did:windtunnel:f2:peer-${i}`;
-        peerDids.push(did);
-        const session = await client.call<{
+        const joinResp = await s.client.call<{
           sdpAnswer: string;
           participantId: string;
           redirectTo?: string;
@@ -90,9 +96,8 @@ export const f2SfuPacketLoss: Scenario = {
           neighbourhoodUrl: NEIGHBOURHOOD,
           roomName: ROOM_NAME,
           sdpOffer: JSON.stringify(offer),
-          agentDidOverride: did,
         });
-        await peer.acceptAnswer(JSON.parse(session.sdpAnswer));
+        await peer.acceptAnswer(JSON.parse(joinResp.sdpAnswer));
       }
 
       await sleep(2000);
@@ -124,10 +129,9 @@ export const f2SfuPacketLoss: Scenario = {
       clearNet();
       for (let i = 0; i < peers.length; i++) {
         try {
-          await client.call("sfu.callLeave", {
+          await sessions[i]?.client.call("sfu.callLeave", {
             neighbourhoodUrl: NEIGHBOURHOOD,
             roomName: ROOM_NAME,
-            agentDidOverride: peerDids[i],
           });
         } catch {}
         try {
@@ -137,6 +141,7 @@ export const f2SfuPacketLoss: Scenario = {
       try {
         await client.call("sfu.stopRoom", { neighbourhoodUrl: NEIGHBOURHOOD, roomName: ROOM_NAME });
       } catch {}
+      await disconnectPeers(sessions);
     }
 
     const endTime = Date.now();

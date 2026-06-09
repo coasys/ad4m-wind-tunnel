@@ -18,6 +18,7 @@
 
 import { Scenario, ScenarioContext, ScenarioResult } from "../scenario.js";
 import { WebRtcPeer, PeerStats } from "../peer.js";
+import { provisionPeers, disconnectPeers } from "../users.js";
 
 const ROOM_NAME = "s1-sfu-20peer";
 const NEIGHBOURHOOD = `windtunnel://s1`;
@@ -55,10 +56,18 @@ export const s1Sfu20Peer: Scenario = {
       throw e;
     }
 
+    const sessions = await provisionPeers({
+      admin: client,
+      port: ctx.port,
+      count: PEER_COUNT,
+      labelPrefix: "s1-peer",
+    });
+
     const peers: WebRtcPeer[] = [];
     try {
-      for (let i = 0; i < PEER_COUNT; i++) {
-        const peer = new WebRtcPeer(`s1-peer-${i}`, {
+      for (let i = 0; i < sessions.length; i++) {
+        const s = sessions[i];
+        const peer = new WebRtcPeer(s.label, {
           audioToneHz: 440 + i * 12,
           recvSlots: PEER_COUNT - 1,
         });
@@ -66,7 +75,7 @@ export const s1Sfu20Peer: Scenario = {
         peers.push(peer);
         const offer = await peer.createOffer();
         const joinStart = Date.now();
-        const session = await client.call<{
+        const joinResp = await s.client.call<{
           sdpAnswer: string;
           participantId: string;
           redirectTo?: string;
@@ -75,18 +84,17 @@ export const s1Sfu20Peer: Scenario = {
           neighbourhoodUrl: NEIGHBOURHOOD,
           roomName: ROOM_NAME,
           sdpOffer: JSON.stringify(offer),
-          agentDidOverride: `did:windtunnel:s1:peer-${i}`,
         });
         const joinElapsed = Date.now() - joinStart;
         samples.push({
-          name: `call_join_peer_${i}`,
+          name: `call_join_${s.label}`,
           durationMs: joinElapsed,
           timestamp: Date.now(),
         });
-        if (session.redirectTo) {
-          throw new Error(`S1 unexpected cascade redirect to ${session.redirectTo}`);
+        if (joinResp.redirectTo) {
+          throw new Error(`S1 unexpected cascade redirect to ${joinResp.redirectTo}`);
         }
-        await peer.acceptAnswer(JSON.parse(session.sdpAnswer));
+        await peer.acceptAnswer(JSON.parse(joinResp.sdpAnswer));
       }
 
       await waitForServerParticipantCount(client, ROOM_NAME, PEER_COUNT, 45_000);
@@ -119,14 +127,21 @@ export const s1Sfu20Peer: Scenario = {
       metrics["serverReportedParticipants"] =
         rooms.find((r) => r.roomName === ROOM_NAME)?.participantCount ?? -1;
     } finally {
-      for (const peer of peers) {
+      for (let i = 0; i < peers.length; i++) {
         try {
-          await peer.close();
+          await sessions[i]?.client.call("sfu.callLeave", {
+            neighbourhoodUrl: NEIGHBOURHOOD,
+            roomName: ROOM_NAME,
+          });
+        } catch {}
+        try {
+          await peers[i].close();
         } catch {}
       }
       try {
         await client.call("sfu.stopRoom", { neighbourhoodUrl: NEIGHBOURHOOD, roomName: ROOM_NAME });
       } catch {}
+      await disconnectPeers(sessions);
     }
 
     const endTime = Date.now();
