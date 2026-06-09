@@ -84,6 +84,15 @@ export class InstrumentedClient {
     }
   }
 
+  /**
+   * Raw WS RPC dispatch.  Public so scenarios can hit handlers the
+   * `InstrumentedClient` doesn't wrap with a typed method (e.g. the
+   * SFU surface in the WebRTC scenarios).
+   */
+  async call<T = any>(method: string, params: any = {}): Promise<T> {
+    return this.wsCall<T>(method, params);
+  }
+
   private async wsCall<T>(method: string, params: any): Promise<T> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error("WebSocket not connected");

@@ -19,3 +19,41 @@ export { s12PersistenceColdQuery } from "./s12-persistence-cold-query.js";
 export { s13ReadWriteMix } from "./s13-read-write-mix.js";
 export { s14MultiPerspectiveLoad } from "./s14-multi-perspective-load.js";
 export { s15LeakAttribution } from "./s15-leak-attribution.js";
+
+// ── WebRTC + SFU scenarios ──
+//
+// W* = WebRTC fundamentals (mesh path, also baselines for SFU)
+// T* = SFU topology
+// M* = Mid-call topology transitions (planned, see SFU plan)
+// F* = Faults (planned)
+// S* = Scale (planned)
+//
+// Pre-requisite: peer driver depends on `@roamhq/wrtc` (optional
+// install).  SFU scenarios additionally need the executor compiled with
+// the SFU service (always-on in the current architecture, no feature
+// flag).
+export { w1Mesh2Peer } from "./w1-mesh-2peer.js";
+export { w1mMeshMultiMachine } from "./w1m-mesh-multimachine.js";
+export { w2Mesh4Peer } from "./w2-mesh-4peer.js";
+export { w3MeshRtt } from "./w3-mesh-rtt.js";
+export { w4MeshBandwidthScaling } from "./w4-mesh-bandwidth-scaling.js";
+export { w5TurnFallback } from "./w5-turn-fallback.js";
+export { t1Sfu5Peer } from "./t1-sfu-5peer.js";
+export { t2Sfu10Peer } from "./t2-sfu-10peer.js";
+export { t5TopologyTable } from "./t5-topology-table.js";
+export { m1MeshToSfu } from "./m1-mesh-to-sfu.js";
+export { m4SfuOfflineFallback } from "./m4-sfu-offline-fallback.js";
+export { f5RenegotiationFlood } from "./f5-renegotiation-flood.js";
+export { f6NonMemberJoin } from "./f6-non-member-join.js";
+export { f7BadCapability } from "./f7-bad-capability.js";
+export { s1Sfu20Peer } from "./s1-sfu-20peer.js";
+export { f1MeshPacketLoss } from "./f1-mesh-packet-loss.js";
+export { f2SfuPacketLoss } from "./f2-sfu-packet-loss.js";
+export { f3OneWayNat } from "./f3-one-way-nat.js";
+export { m2SfuToMesh } from "./m2-sfu-to-mesh.js";
+export { t3SfuCascade2Node } from "./t3-sfu-cascade-2node.js";
+export { t4SfuCascade3Node } from "./t4-sfu-cascade-3node.js";
+export { m3CascadeFailover } from "./m3-cascade-failover.js";
+export { f4NetworkPartition } from "./f4-network-partition.js";
+export { s2SfuCascade4Node } from "./s2-sfu-cascade-4node.js";
+export { s3MaxParticipantsEnforced } from "./s3-max-participants.js";
