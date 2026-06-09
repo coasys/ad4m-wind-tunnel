@@ -112,7 +112,7 @@ export async function startCluster(opts: CascadeClusterOptions): Promise<Cascade
       "--run-dapp-server", "false",
       "--hc-use-bootstrap", "false",
       "--hc-use-proxy", "false",
-      "--enable-multi-user",
+      "--enable-multi-user", "true",
       "--sfu-local-did", planned.did,
       "--sfu-max-participants-per-node", String(opts.maxParticipantsPerNode),
       "--sfu-cascade-listen", `127.0.0.1:${planned.gossipPort}`,

@@ -27,6 +27,7 @@ import { w5TurnFallback } from "./scenarios/w5-turn-fallback.js";
 import { t1Sfu5Peer } from "./scenarios/t1-sfu-5peer.js";
 import { t2Sfu10Peer } from "./scenarios/t2-sfu-10peer.js";
 import { t5TopologyTable } from "./scenarios/t5-topology-table.js";
+import { t6PipeHandshake } from "./scenarios/t6-pipe-handshake.js";
 import { m1MeshToSfu } from "./scenarios/m1-mesh-to-sfu.js";
 import { m4SfuOfflineFallback } from "./scenarios/m4-sfu-offline-fallback.js";
 import { f5RenegotiationFlood } from "./scenarios/f5-renegotiation-flood.js";
@@ -91,6 +92,7 @@ function pick(ids: string[]): Scenario[] {
     t3: t3SfuCascade2Node,
     t4: t4SfuCascade3Node,
     t5: t5TopologyTable,
+    t6: t6PipeHandshake,
     m1: m1MeshToSfu,
     m2: m2SfuToMesh,
     m3: m3CascadeFailover,

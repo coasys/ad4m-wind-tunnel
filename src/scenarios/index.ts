@@ -41,6 +41,7 @@ export { w5TurnFallback } from "./w5-turn-fallback.js";
 export { t1Sfu5Peer } from "./t1-sfu-5peer.js";
 export { t2Sfu10Peer } from "./t2-sfu-10peer.js";
 export { t5TopologyTable } from "./t5-topology-table.js";
+export { t6PipeHandshake } from "./t6-pipe-handshake.js";
 export { m1MeshToSfu } from "./m1-mesh-to-sfu.js";
 export { m4SfuOfflineFallback } from "./m4-sfu-offline-fallback.js";
 export { f5RenegotiationFlood } from "./f5-renegotiation-flood.js";
