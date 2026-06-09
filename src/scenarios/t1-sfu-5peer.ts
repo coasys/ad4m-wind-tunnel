@@ -19,6 +19,7 @@
 import { Scenario, ScenarioContext, ScenarioResult } from "../scenario.js";
 import { WebRtcPeer, PeerStats } from "../peer.js";
 import { provisionPeers, disconnectPeers } from "../users.js";
+import { wireRenegotiation, RenegotiationWire } from "../renegotiation.js";
 
 const ROOM_NAME = "t1-sfu-5peer";
 
@@ -47,15 +48,25 @@ export const t1Sfu5Peer: Scenario = {
     });
 
     const peers: WebRtcPeer[] = [];
+    const wires: RenegotiationWire[] = [];
     try {
       for (let i = 0; i < sessions.length; i++) {
         const session = sessions[i];
         const peer = new WebRtcPeer(session.label, {
           audioToneHz: 440 + i * 40,
-          recvSlots: sessions.length - 1,
         });
         await peer.attachSyntheticStream();
         peers.push(peer);
+
+        const wire = await wireRenegotiation({
+          client: session.client,
+          peer,
+          token: session.token,
+          port,
+          neighbourhoodUrl,
+          roomName: ROOM_NAME,
+        });
+        wires.push(wire);
 
         const offer = await peer.createOffer();
         const joinStart = Date.now();
@@ -106,7 +117,15 @@ export const t1Sfu5Peer: Scenario = {
       );
       const room = rooms.find((r) => r.roomName === ROOM_NAME);
       metrics["serverReportedParticipants"] = room?.participantCount ?? -1;
+      metrics["renegotiationsAppliedPerPeer"] = wires.map((w) => w.count());
     } finally {
+      for (const w of wires) {
+        try {
+          await w.detach();
+        } catch {
+          /* best-effort */
+        }
+      }
       for (let i = 0; i < peers.length; i++) {
         const session = sessions[i];
         if (session) {
