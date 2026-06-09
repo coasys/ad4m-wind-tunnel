@@ -117,3 +117,97 @@ export async function disconnectPeers(sessions: PeerSession[]): Promise<void> {
     }
   }
 }
+
+export interface ClusterNodeAuth {
+  /** Cluster identifier (matches the DID/label of the SFU node). */
+  nodeId: string;
+  /** Admin client to this executor (already connected). */
+  admin: InstrumentedClient;
+  /** WS port for this executor. */
+  port: number;
+  /** Host (defaults to 127.0.0.1). */
+  host?: string;
+}
+
+export interface ClusterPeerSession {
+  /** Stable label, e.g. `t3-peer-3`. */
+  label: string;
+  email: string;
+  password: string;
+  /** Per-node user state.  Same email/password/DID across all nodes,
+   *  but each node mints its own JWT and we open a fresh client per
+   *  node so any node can be used for callJoin / callLeave. */
+  byNode: Map<string, { token: string; did: string; client: InstrumentedClient }>;
+}
+
+/**
+ * Provision N peers across an entire SFU cluster.  Each peer is created
+ * as a user on every cluster node so it can callJoin to any node
+ * (handy for cascade scenarios where peers may follow redirects).  The
+ * email/password is shared; each node mints its own JWT.
+ *
+ * Returns the sessions plus a convenience helper `pickClient(peer,
+ * nodeId)` for scenario code.
+ */
+export async function provisionClusterPeers(opts: {
+  nodes: ClusterNodeAuth[];
+  count: number;
+  labelPrefix?: string;
+  emailDomain?: string;
+}): Promise<ClusterPeerSession[]> {
+  const labelPrefix = opts.labelPrefix ?? "peer";
+  const emailDomain = opts.emailDomain ?? `windtunnel-${randomSuffix()}.local`;
+  const out: ClusterPeerSession[] = [];
+
+  for (let i = 0; i < opts.count; i++) {
+    const label = `${labelPrefix}-${i}`;
+    const email = `${label}@${emailDomain}`;
+    const password = `pw-${randomSuffix()}`;
+    const byNode = new Map<string, { token: string; did: string; client: InstrumentedClient }>();
+
+    for (const node of opts.nodes) {
+      const create = await node.admin.call<{
+        did: string;
+        success: boolean;
+        error?: string;
+      }>("user.create", { email, password });
+      if (!create.success) {
+        throw new Error(
+          `provisionClusterPeers: user.create failed on ${node.nodeId} for ${label}: ${
+            create.error ?? "unknown"
+          }`,
+        );
+      }
+      const token = await node.admin.call<string>("user.login", {
+        email,
+        password,
+        appName: "wind-tunnel",
+      });
+      if (typeof token !== "string" || token.length === 0) {
+        throw new Error(`provisionClusterPeers: empty token on ${node.nodeId} for ${label}`);
+      }
+      const client = new InstrumentedClient({
+        port: node.port,
+        host: node.host ?? "127.0.0.1",
+        adminToken: token,
+      });
+      await client.connect();
+      byNode.set(node.nodeId, { token, did: create.did, client });
+    }
+
+    out.push({ label, email, password, byNode });
+  }
+  return out;
+}
+
+export async function disconnectClusterPeers(sessions: ClusterPeerSession[]): Promise<void> {
+  for (const s of sessions) {
+    for (const [, entry] of s.byNode) {
+      try {
+        await entry.client.disconnect();
+      } catch {
+        /* best-effort */
+      }
+    }
+  }
+}

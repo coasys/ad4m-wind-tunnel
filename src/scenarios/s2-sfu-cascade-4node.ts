@@ -13,6 +13,11 @@
 import { Scenario, ScenarioContext, ScenarioResult } from "../scenario.js";
 import { WebRtcPeer } from "../peer.js";
 import { startCluster, CascadeNode } from "../cascade.js";
+import {
+  provisionClusterPeers,
+  disconnectClusterPeers,
+  ClusterPeerSession,
+} from "../users.js";
 
 const ROOM_NAME = "s2-sfu-cascade-4node";
 const NEIGHBOURHOOD = `windtunnel://s2`;
@@ -31,13 +36,14 @@ export const s2SfuCascade4Node: Scenario = {
     const metrics: Record<string, unknown> = {};
 
     let cluster: Awaited<ReturnType<typeof startCluster>> | null = null;
-    const peers: { peer: WebRtcPeer; node: CascadeNode; did: string }[] = [];
+    const peers: { peer: WebRtcPeer; node: CascadeNode; session: ClusterPeerSession }[] = [];
+    let clusterSessions: ClusterPeerSession[] = [];
 
     try {
       cluster = await startCluster({
         nodeCount: 4,
         maxParticipantsPerNode: MAX_PER_NODE,
-        basePort: 13200,
+        wsBasePort: 13200,
       });
 
       const didToNode = new Map<string, CascadeNode>();
@@ -49,18 +55,29 @@ export const s2SfuCascade4Node: Scenario = {
         });
       }
 
+      clusterSessions = await provisionClusterPeers({
+        nodes: cluster.nodes.map((n) => ({
+          nodeId: n.did,
+          admin: n.client,
+          port: n.port,
+        })),
+        count: PEER_COUNT,
+        labelPrefix: "s2-peer",
+      });
+
       const nodeA = cluster.nodes[0];
       const counts: Record<string, number> = {};
       cluster.nodes.forEach((n) => (counts[n.did] = 0));
 
       for (let i = 0; i < PEER_COUNT; i++) {
-        const peer = new WebRtcPeer(`s2-peer-${i}`, { audioToneHz: 440 + (i % 30) * 10 });
+        const cs = clusterSessions[i];
+        const peer = new WebRtcPeer(cs.label, { audioToneHz: 440 + (i % 30) * 10 });
         await peer.attachSyntheticStream();
-        const did = `did:windtunnel:s2:peer-${i}`;
         const offer = await peer.createOffer();
 
         let landed: CascadeNode = nodeA;
-        let session = await nodeA.client.call<{
+        const aClient = cs.byNode.get(nodeA.did)!.client;
+        let session = await aClient.call<{
           sdpAnswer: string;
           participantId: string;
           redirectTo?: string;
@@ -69,7 +86,6 @@ export const s2SfuCascade4Node: Scenario = {
           neighbourhoodUrl: NEIGHBOURHOOD,
           roomName: ROOM_NAME,
           sdpOffer: JSON.stringify(offer),
-          agentDidOverride: did,
         });
         let hops = 1;
         while (session.redirectTo) {
@@ -79,7 +95,8 @@ export const s2SfuCascade4Node: Scenario = {
           if (hops > cluster.nodes.length + 1) {
             throw new Error(`S2 peer ${i} bounced ${hops} times — cascade cycle`);
           }
-          session = await target.client.call<{
+          const targetClient = cs.byNode.get(target.did)!.client;
+          session = await targetClient.call<{
             sdpAnswer: string;
             participantId: string;
             redirectTo?: string;
@@ -88,18 +105,12 @@ export const s2SfuCascade4Node: Scenario = {
             neighbourhoodUrl: NEIGHBOURHOOD,
             roomName: ROOM_NAME,
             sdpOffer: JSON.stringify(offer),
-            agentDidOverride: did,
           });
           landed = target;
         }
         await peer.acceptAnswer(JSON.parse(session.sdpAnswer));
-        peers.push({ peer, node: landed, did });
+        peers.push({ peer, node: landed, session: cs });
         counts[landed.did]++;
-        await cluster.announceCount(
-          landed,
-          `${NEIGHBOURHOOD}:${ROOM_NAME}`,
-          counts[landed.did],
-        );
       }
 
       metrics["participantsPerNode"] = counts;
@@ -117,18 +128,18 @@ export const s2SfuCascade4Node: Scenario = {
         timestamp: Date.now(),
       });
     } finally {
-      for (const { peer, node, did } of peers) {
+      for (const { peer, node, session } of peers) {
         try {
-          await node.client.call("sfu.callLeave", {
+          await session.byNode.get(node.did)!.client.call("sfu.callLeave", {
             neighbourhoodUrl: NEIGHBOURHOOD,
             roomName: ROOM_NAME,
-            agentDidOverride: did,
           });
         } catch {}
         try {
           await peer.close();
         } catch {}
       }
+      await disconnectClusterPeers(clusterSessions);
       if (cluster) {
         try {
           await cluster.shutdown();

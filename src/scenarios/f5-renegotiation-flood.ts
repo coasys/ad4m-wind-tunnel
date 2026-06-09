@@ -22,6 +22,8 @@
 
 import { Scenario, ScenarioContext, ScenarioResult } from "../scenario.js";
 import { WebRtcPeer } from "../peer.js";
+import { InstrumentedClient } from "../client.js";
+import { provisionPeers, PeerSession } from "../users.js";
 
 const ROOM_NAME = "f5-renegotiation-flood";
 const NEIGHBOURHOOD = `windtunnel://f5`;
@@ -30,7 +32,7 @@ const CHURN_CYCLES = 10; // each cycle = 1 leave + 1 new join
 
 interface F5Peer {
   peer: WebRtcPeer;
-  agentDidOverride: string;
+  session: PeerSession;
 }
 
 export const f5RenegotiationFlood: Scenario = {
@@ -70,7 +72,7 @@ export const f5RenegotiationFlood: Scenario = {
     try {
       // Steady state: 10 peers joined.
       for (let i = 0; i < STEADY_STATE_PEERS; i++) {
-        peers.push(await joinOne(client, nextPeerId++));
+        peers.push(await joinOne(client, ctx.port, nextPeerId++));
       }
 
       // Confirm the steady state.
@@ -88,10 +90,10 @@ export const f5RenegotiationFlood: Scenario = {
       for (let c = 0; c < CHURN_CYCLES; c++) {
         const leaving = peers.shift();
         if (leaving) {
-          await leaveOne(client, leaving);
+          await leaveOne(leaving);
         }
         const t0 = Date.now();
-        const f5peer = await joinOne(client, nextPeerId++);
+        const f5peer = await joinOne(client, ctx.port, nextPeerId++);
         const dt = Date.now() - t0;
         joinDurations.push(dt);
         peers.push(f5peer);
@@ -119,7 +121,7 @@ export const f5RenegotiationFlood: Scenario = {
     } finally {
       for (const f5peer of peers) {
         try {
-          await leaveOne(client, f5peer);
+          await leaveOne(f5peer);
         } catch {}
       }
       try {
@@ -144,12 +146,21 @@ export const f5RenegotiationFlood: Scenario = {
   },
 };
 
-async function joinOne(client: ScenarioContext["client"], idx: number): Promise<F5Peer> {
-  const peer = new WebRtcPeer(`f5-peer-${idx}`, { audioToneHz: 440 + (idx % 20) * 10 });
+async function joinOne(
+  admin: InstrumentedClient,
+  port: number,
+  idx: number,
+): Promise<F5Peer> {
+  const [session] = await provisionPeers({
+    admin,
+    port,
+    count: 1,
+    labelPrefix: `f5-peer-${idx}`,
+  });
+  const peer = new WebRtcPeer(session.label, { audioToneHz: 440 + (idx % 20) * 10 });
   await peer.attachSyntheticStream();
   const offer = await peer.createOffer();
-  const agentDidOverride = `did:windtunnel:f5:peer-${idx}`;
-  const session = await client.call<{
+  const joinResp = await session.client.call<{
     sdpAnswer: string;
     participantId: string;
     redirectTo?: string;
@@ -158,22 +169,23 @@ async function joinOne(client: ScenarioContext["client"], idx: number): Promise<
     neighbourhoodUrl: NEIGHBOURHOOD,
     roomName: ROOM_NAME,
     sdpOffer: JSON.stringify(offer),
-    agentDidOverride,
   });
-  await peer.acceptAnswer(JSON.parse(session.sdpAnswer));
-  return { peer, agentDidOverride };
+  await peer.acceptAnswer(JSON.parse(joinResp.sdpAnswer));
+  return { peer, session };
 }
 
-async function leaveOne(client: ScenarioContext["client"], f5peer: F5Peer): Promise<void> {
+async function leaveOne(f5peer: F5Peer): Promise<void> {
   try {
-    await client.call("sfu.callLeave", {
+    await f5peer.session.client.call("sfu.callLeave", {
       neighbourhoodUrl: NEIGHBOURHOOD,
       roomName: ROOM_NAME,
-      agentDidOverride: f5peer.agentDidOverride,
     });
   } catch {}
   try {
     await f5peer.peer.close();
+  } catch {}
+  try {
+    await f5peer.session.client.disconnect();
   } catch {}
 }
 

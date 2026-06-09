@@ -12,6 +12,11 @@
 import { Scenario, ScenarioContext, ScenarioResult } from "../scenario.js";
 import { WebRtcPeer } from "../peer.js";
 import { startCluster, CascadeNode } from "../cascade.js";
+import {
+  provisionClusterPeers,
+  disconnectClusterPeers,
+  ClusterPeerSession,
+} from "../users.js";
 
 const ROOM_NAME = "m3-cascade-failover";
 const NEIGHBOURHOOD = `windtunnel://m3`;
@@ -21,7 +26,7 @@ const MAX_PER_NODE = 5;
 interface TrackedPeer {
   peer: WebRtcPeer;
   node: CascadeNode;
-  did: string;
+  session: ClusterPeerSession;
 }
 
 export const m3CascadeFailover: Scenario = {
@@ -37,12 +42,13 @@ export const m3CascadeFailover: Scenario = {
 
     let cluster: Awaited<ReturnType<typeof startCluster>> | null = null;
     const peers: TrackedPeer[] = [];
+    let clusterSessions: ClusterPeerSession[] = [];
 
     try {
       cluster = await startCluster({
         nodeCount: 2,
         maxParticipantsPerNode: MAX_PER_NODE,
-        basePort: 13400,
+        wsBasePort: 13400,
       });
 
       const didToNode = new Map<string, CascadeNode>();
@@ -55,13 +61,24 @@ export const m3CascadeFailover: Scenario = {
       }
       const [nodeA, nodeB] = cluster.nodes;
 
+      clusterSessions = await provisionClusterPeers({
+        nodes: cluster.nodes.map((n) => ({
+          nodeId: n.did,
+          admin: n.client,
+          port: n.port,
+        })),
+        count: TOTAL_PEERS,
+        labelPrefix: "m3-peer",
+      });
+
       for (let i = 0; i < TOTAL_PEERS; i++) {
-        const peer = new WebRtcPeer(`m3-peer-${i}`, { audioToneHz: 440 + i * 30 });
+        const cs = clusterSessions[i];
+        const peer = new WebRtcPeer(cs.label, { audioToneHz: 440 + i * 30 });
         await peer.attachSyntheticStream();
-        const did = `did:windtunnel:m3:peer-${i}`;
         const offer = await peer.createOffer();
         let landed: CascadeNode = nodeA;
-        let session = await nodeA.client.call<{
+        const aClient = cs.byNode.get(nodeA.did)!.client;
+        let session = await aClient.call<{
           sdpAnswer: string;
           participantId: string;
           redirectTo?: string;
@@ -70,12 +87,12 @@ export const m3CascadeFailover: Scenario = {
           neighbourhoodUrl: NEIGHBOURHOOD,
           roomName: ROOM_NAME,
           sdpOffer: JSON.stringify(offer),
-          agentDidOverride: did,
         });
         if (session.redirectTo) {
           const target = didToNode.get(session.redirectTo);
           if (!target) throw new Error(`M3 unknown redirect ${session.redirectTo}`);
-          session = await target.client.call<{
+          const targetClient = cs.byNode.get(target.did)!.client;
+          session = await targetClient.call<{
             sdpAnswer: string;
             participantId: string;
             redirectTo?: string;
@@ -84,12 +101,11 @@ export const m3CascadeFailover: Scenario = {
             neighbourhoodUrl: NEIGHBOURHOOD,
             roomName: ROOM_NAME,
             sdpOffer: JSON.stringify(offer),
-            agentDidOverride: did,
           });
           landed = target;
         }
         await peer.acceptAnswer(JSON.parse(session.sdpAnswer));
-        peers.push({ peer, node: landed, did });
+        peers.push({ peer, node: landed, session: cs });
       }
 
       const initialACount = peers.filter((p) => p.node === nodeA).length;
@@ -133,7 +149,8 @@ export const m3CascadeFailover: Scenario = {
         await fresh.attachSyntheticStream();
         const offer = await fresh.createOffer();
         try {
-          const session = await nodeB.client.call<{
+          const bClient = tp.session.byNode.get(nodeB.did)!.client;
+          const session = await bClient.call<{
             sdpAnswer: string;
             participantId: string;
             redirectTo?: string;
@@ -142,7 +159,6 @@ export const m3CascadeFailover: Scenario = {
             neighbourhoodUrl: NEIGHBOURHOOD,
             roomName: ROOM_NAME,
             sdpOffer: JSON.stringify(offer),
-            agentDidOverride: tp.did,
           });
           if (session.redirectTo) {
             // B is also at capacity — no cascade target.
@@ -151,7 +167,7 @@ export const m3CascadeFailover: Scenario = {
             continue;
           }
           await fresh.acceptAnswer(JSON.parse(session.sdpAnswer));
-          peers[i] = { peer: fresh, node: nodeB, did: tp.did };
+          peers[i] = { peer: fresh, node: nodeB, session: tp.session };
           reconnected.push({ idx: i, ok: true });
         } catch (e) {
           reconnected.push({ idx: i, ok: false });
@@ -180,16 +196,16 @@ export const m3CascadeFailover: Scenario = {
       for (const tp of peers) {
         if (tp.node === cluster?.nodes[0]) continue; // A is dead, skip leave
         try {
-          await tp.node.client.call("sfu.callLeave", {
+          await tp.session.byNode.get(tp.node.did)!.client.call("sfu.callLeave", {
             neighbourhoodUrl: NEIGHBOURHOOD,
             roomName: ROOM_NAME,
-            agentDidOverride: tp.did,
           });
         } catch {}
         try {
           await tp.peer.close();
         } catch {}
       }
+      await disconnectClusterPeers(clusterSessions);
       if (cluster) {
         try {
           await cluster.shutdown();

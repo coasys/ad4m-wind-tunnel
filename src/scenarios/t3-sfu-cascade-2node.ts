@@ -25,6 +25,11 @@
 import { Scenario, ScenarioContext, ScenarioResult } from "../scenario.js";
 import { WebRtcPeer } from "../peer.js";
 import { startCluster, CascadeNode } from "../cascade.js";
+import {
+  provisionClusterPeers,
+  disconnectClusterPeers,
+  ClusterPeerSession,
+} from "../users.js";
 
 const ROOM_NAME = "t3-sfu-cascade-2node";
 const NEIGHBOURHOOD = `windtunnel://t3`;
@@ -43,14 +48,15 @@ export const t3SfuCascade2Node: Scenario = {
     const metrics: Record<string, unknown> = {};
 
     let cluster: Awaited<ReturnType<typeof startCluster>> | null = null;
-    const peers: { peer: WebRtcPeer; node: CascadeNode; did: string }[] = [];
+    const peers: { peer: WebRtcPeer; node: CascadeNode; session: ClusterPeerSession }[] = [];
+    let clusterSessions: ClusterPeerSession[] = [];
 
     try {
       cluster = await startCluster({
         nodeCount: 2,
         maxParticipantsPerNode: MAX_PER_NODE,
         // Don't collide with the main wind-tunnel executor on 12000.
-        basePort: 13000,
+        wsBasePort: 13000,
       });
       const [nodeA, nodeB] = cluster.nodes;
       metrics["nodeA"] = nodeA.did;
@@ -67,21 +73,34 @@ export const t3SfuCascade2Node: Scenario = {
         roomName: ROOM_NAME,
       });
 
-      const redirectCount: { fromA: number; toB: number } = { fromA: 0, toB: 0 };
+      // Each peer needs a user on every cluster node so that cascade
+      // redirects don't fail with "Caller DID not resolved" — the user
+      // must exist locally on whatever node accepts the join.
+      clusterSessions = await provisionClusterPeers({
+        nodes: cluster.nodes.map((n) => ({
+          nodeId: n.did,
+          admin: n.client,
+          port: n.port,
+        })),
+        count: PEER_COUNT,
+        labelPrefix: "t3-peer",
+      });
 
+      const redirectCount: { fromA: number; toB: number } = { fromA: 0, toB: 0 };
       const didToNode = new Map<string, CascadeNode>([
         [nodeA.did, nodeA],
         [nodeB.did, nodeB],
       ]);
 
       for (let i = 0; i < PEER_COUNT; i++) {
-        const peer = new WebRtcPeer(`t3-peer-${i}`, { audioToneHz: 440 + i * 30 });
+        const cs = clusterSessions[i];
+        const peer = new WebRtcPeer(cs.label, { audioToneHz: 440 + i * 30 });
         await peer.attachSyntheticStream();
-        const did = `did:windtunnel:t3:peer-${i}`;
         const offer = await peer.createOffer();
 
         let landed: CascadeNode = nodeA;
-        let session = await nodeA.client.call<{
+        const peerClientA = cs.byNode.get(nodeA.did)!.client;
+        let session = await peerClientA.call<{
           sdpAnswer: string;
           participantId: string;
           redirectTo?: string;
@@ -90,7 +109,6 @@ export const t3SfuCascade2Node: Scenario = {
           neighbourhoodUrl: NEIGHBOURHOOD,
           roomName: ROOM_NAME,
           sdpOffer: JSON.stringify(offer),
-          agentDidOverride: did,
         });
 
         const seen = new Set<string>([nodeA.did]);
@@ -109,7 +127,8 @@ export const t3SfuCascade2Node: Scenario = {
             throw new Error(`T3 peer ${i} redirect to unknown DID ${session.redirectTo}`);
           }
           hops++;
-          session = await target.client.call<{
+          const targetClient = cs.byNode.get(target.did)!.client;
+          session = await targetClient.call<{
             sdpAnswer: string;
             participantId: string;
             redirectTo?: string;
@@ -118,7 +137,6 @@ export const t3SfuCascade2Node: Scenario = {
             neighbourhoodUrl: NEIGHBOURHOOD,
             roomName: ROOM_NAME,
             sdpOffer: JSON.stringify(offer),
-            agentDidOverride: did,
           });
           landed = target;
         }
@@ -129,10 +147,7 @@ export const t3SfuCascade2Node: Scenario = {
           timestamp: Date.now(),
         });
         await peer.acceptAnswer(JSON.parse(session.sdpAnswer));
-        peers.push({ peer, node: landed, did });
-        // Keep peer counts fresh across the cluster (see T4 / cascade.ts).
-        const landedCount = peers.filter((p) => p.node.id === landed.id).length;
-        await cluster.announceCount(landed, `${NEIGHBOURHOOD}:${ROOM_NAME}`, landedCount);
+        peers.push({ peer, node: landed, session: cs });
       }
 
       metrics["redirectFromA"] = redirectCount.fromA;
@@ -154,18 +169,18 @@ export const t3SfuCascade2Node: Scenario = {
         metrics["nodeAParticipants"] === MAX_PER_NODE &&
         metrics["nodeBParticipants"] === PEER_COUNT - MAX_PER_NODE;
     } finally {
-      for (const { peer, node, did } of peers) {
+      for (const { peer, node, session } of peers) {
         try {
-          await node.client.call("sfu.callLeave", {
+          await session.byNode.get(node.did)!.client.call("sfu.callLeave", {
             neighbourhoodUrl: NEIGHBOURHOOD,
             roomName: ROOM_NAME,
-            agentDidOverride: did,
           });
         } catch {}
         try {
           await peer.close();
         } catch {}
       }
+      await disconnectClusterPeers(clusterSessions);
       if (cluster) {
         try {
           await cluster.shutdown();

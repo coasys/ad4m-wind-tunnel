@@ -84,3 +84,75 @@ export function setNetem(opts: NetemOptions, iface: string = DEFAULT_IFACE): boo
 export function netAvailable(): boolean {
   return tcAvailable();
 }
+
+const PARTITION_CHAIN = "WT_PARTITION";
+
+function iptablesAvailable(): boolean {
+  if (process.platform !== "linux") return false;
+  try {
+    execSync("which iptables", { stdio: "pipe" });
+    execSync("sudo -n true", { stdio: "pipe" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function iptablesPartitionAvailable(): boolean {
+  return iptablesAvailable();
+}
+
+/**
+ * Install (or reset) an iptables chain that drops loopback TCP
+ * traffic to the given ports.  Used by F4 to simulate a cluster
+ * partition without going through any admin RPC.
+ */
+export function dropTcpPorts(ports: number[]): boolean {
+  if (!iptablesAvailable()) return false;
+  // Wipe + recreate the chain so repeated calls are idempotent.
+  try {
+    execSync(`sudo -n iptables -D INPUT -j ${PARTITION_CHAIN}`, { stdio: "pipe" });
+  } catch {
+    /* not yet attached */
+  }
+  try {
+    execSync(`sudo -n iptables -F ${PARTITION_CHAIN}`, { stdio: "pipe" });
+  } catch {
+    /* chain may not exist */
+  }
+  try {
+    execSync(`sudo -n iptables -X ${PARTITION_CHAIN}`, { stdio: "pipe" });
+  } catch {
+    /* not present */
+  }
+  if (ports.length === 0) return true;
+  try {
+    execSync(`sudo -n iptables -N ${PARTITION_CHAIN}`, { stdio: "pipe" });
+    for (const port of ports) {
+      execSync(
+        `sudo -n iptables -A ${PARTITION_CHAIN} -p tcp --dport ${port} -j DROP`,
+        { stdio: "pipe" },
+      );
+    }
+    execSync(`sudo -n iptables -I INPUT -j ${PARTITION_CHAIN}`, { stdio: "pipe" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Clear the partition chain installed by `dropTcpPorts`. */
+export function clearPartition(): void {
+  if (!iptablesAvailable()) return;
+  try {
+    execSync(`sudo -n iptables -D INPUT -j ${PARTITION_CHAIN}`, { stdio: "pipe" });
+  } catch {
+    /* not attached */
+  }
+  try {
+    execSync(`sudo -n iptables -F ${PARTITION_CHAIN}`, { stdio: "pipe" });
+  } catch {}
+  try {
+    execSync(`sudo -n iptables -X ${PARTITION_CHAIN}`, { stdio: "pipe" });
+  } catch {}
+}

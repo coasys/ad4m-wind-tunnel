@@ -15,6 +15,11 @@
 import { Scenario, ScenarioContext, ScenarioResult } from "../scenario.js";
 import { WebRtcPeer } from "../peer.js";
 import { startCluster, CascadeNode } from "../cascade.js";
+import {
+  provisionClusterPeers,
+  disconnectClusterPeers,
+  ClusterPeerSession,
+} from "../users.js";
 
 const ROOM_NAME = "t4-sfu-cascade-3node";
 const NEIGHBOURHOOD = `windtunnel://t4`;
@@ -33,13 +38,14 @@ export const t4SfuCascade3Node: Scenario = {
     const metrics: Record<string, unknown> = {};
 
     let cluster: Awaited<ReturnType<typeof startCluster>> | null = null;
-    const peers: { peer: WebRtcPeer; node: CascadeNode; did: string }[] = [];
+    const peers: { peer: WebRtcPeer; node: CascadeNode; session: ClusterPeerSession }[] = [];
+    let clusterSessions: ClusterPeerSession[] = [];
 
     try {
       cluster = await startCluster({
         nodeCount: 3,
         maxParticipantsPerNode: MAX_PER_NODE,
-        basePort: 13100,
+        wsBasePort: 13100,
       });
 
       const didToNode = new Map<string, CascadeNode>();
@@ -51,19 +57,30 @@ export const t4SfuCascade3Node: Scenario = {
         });
       }
 
+      clusterSessions = await provisionClusterPeers({
+        nodes: cluster.nodes.map((n) => ({
+          nodeId: n.did,
+          admin: n.client,
+          port: n.port,
+        })),
+        count: PEER_COUNT,
+        labelPrefix: "t4-peer",
+      });
+
       const nodeA = cluster.nodes[0];
       const counts: Record<string, number> = {};
       cluster.nodes.forEach((n) => (counts[n.did] = 0));
       const redirectCounts: Record<string, number> = {};
 
       for (let i = 0; i < PEER_COUNT; i++) {
-        const peer = new WebRtcPeer(`t4-peer-${i}`, { audioToneHz: 440 + i * 20 });
+        const cs = clusterSessions[i];
+        const peer = new WebRtcPeer(cs.label, { audioToneHz: 440 + i * 20 });
         await peer.attachSyntheticStream();
-        const did = `did:windtunnel:t4:peer-${i}`;
         const offer = await peer.createOffer();
 
         let landed: CascadeNode = nodeA;
-        let session = await nodeA.client.call<{
+        const aClient = cs.byNode.get(nodeA.did)!.client;
+        let session = await aClient.call<{
           sdpAnswer: string;
           participantId: string;
           redirectTo?: string;
@@ -72,7 +89,6 @@ export const t4SfuCascade3Node: Scenario = {
           neighbourhoodUrl: NEIGHBOURHOOD,
           roomName: ROOM_NAME,
           sdpOffer: JSON.stringify(offer),
-          agentDidOverride: did,
         });
 
         let hops = 1;
@@ -87,7 +103,8 @@ export const t4SfuCascade3Node: Scenario = {
           if (hops > cluster.nodes.length) {
             throw new Error(`T4 peer ${i} bounced ${hops} times — cycle detected`);
           }
-          session = await target.client.call<{
+          const targetClient = cs.byNode.get(target.did)!.client;
+          session = await targetClient.call<{
             sdpAnswer: string;
             participantId: string;
             redirectTo?: string;
@@ -96,23 +113,13 @@ export const t4SfuCascade3Node: Scenario = {
             neighbourhoodUrl: NEIGHBOURHOOD,
             roomName: ROOM_NAME,
             sdpOffer: JSON.stringify(offer),
-            agentDidOverride: did,
           });
           landed = target;
         }
 
         await peer.acceptAnswer(JSON.parse(session.sdpAnswer));
-        peers.push({ peer, node: landed, did });
+        peers.push({ peer, node: landed, session: cs });
         counts[landed.did]++;
-        // Keep every OTHER node's cascade view fresh: tell them that
-        // `landed` now has counts[landed.did] participants.  Without
-        // this update the cluster looks like all nodes have 0 from
-        // each others' view and redirects bounce.
-        await cluster.announceCount(
-          landed,
-          `${NEIGHBOURHOOD}:${ROOM_NAME}`,
-          counts[landed.did],
-        );
         samples.push({
           name: `t4_peer_${i}_landed_${landed.id}_hops_${hops}`,
           durationMs: 0,
@@ -142,18 +149,18 @@ export const t4SfuCascade3Node: Scenario = {
       metrics["maxPerNodeActual"] = maxPerNodeActual;
       metrics["distributionOk"] = total === PEER_COUNT && maxPerNodeActual <= MAX_PER_NODE;
     } finally {
-      for (const { peer, node, did } of peers) {
+      for (const { peer, node, session } of peers) {
         try {
-          await node.client.call("sfu.callLeave", {
+          await session.byNode.get(node.did)!.client.call("sfu.callLeave", {
             neighbourhoodUrl: NEIGHBOURHOOD,
             roomName: ROOM_NAME,
-            agentDidOverride: did,
           });
         } catch {}
         try {
           await peer.close();
         } catch {}
       }
+      await disconnectClusterPeers(clusterSessions);
       if (cluster) {
         try {
           await cluster.shutdown();

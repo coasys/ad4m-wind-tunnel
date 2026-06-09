@@ -1,24 +1,33 @@
 /**
  * F4: Cascade network partition.
  *
- * 2-node cluster.  Once peers are joined to both nodes, simulate a
- * partition between A and B by removing the cascade peer entry from
- * each side's `CascadeManager`.  Verify:
+ * 2-node cluster.  Once peers are joined to both nodes, drop the
+ * gossip TCP connection between A and B by installing an iptables
+ * DROP rule on each node's gossip port.  After the gossip has been
+ * partitioned for long enough that the node-state TTL would expire,
+ * verify:
  *
- *  - Peers on either side keep their existing local SFU connections.
- *  - New peers joining A no longer see B as a redirect target (no
- *    "ghost" cascade decisions).
+ *  - Existing peers keep their existing local SFU connections.
+ *  - New peers joining A no longer see B as a redirect target.
  *  - Both sides remain responsive.
  *
- * On a real multi-host deployment "partition" is iptables/tc;
- * single-host this is the static-config equivalent: re-issue
- * `sfu.enableCascade` on each node with an empty peer list to drop
- * the inter-node knowledge.
+ * The TCP gossip transport bound at executor boot drops outbound
+ * frames silently when the peer is unreachable, so the partition is
+ * one-shot iptables and clean to revert.
+ *
+ * Requires `iptables` + passwordless `sudo`.  Skips gracefully when
+ * unavailable.
  */
 
 import { Scenario, ScenarioContext, ScenarioResult } from "../scenario.js";
 import { WebRtcPeer } from "../peer.js";
 import { startCluster, CascadeNode } from "../cascade.js";
+import {
+  provisionClusterPeers,
+  disconnectClusterPeers,
+  ClusterPeerSession,
+} from "../users.js";
+import { iptablesPartitionAvailable, dropTcpPorts, clearPartition } from "../net.js";
 
 const ROOM_NAME = "f4-network-partition";
 const NEIGHBOURHOOD = `windtunnel://f4`;
@@ -27,7 +36,7 @@ const MAX_PER_NODE = 4;
 export const f4NetworkPartition: Scenario = {
   id: "f4",
   name: "Cascade network partition",
-  description: "2-node cluster, partition A↔B, verify no ghost cascade decisions",
+  description: "2-node cluster, partition A↔B via iptables, verify no ghost cascade decisions",
 
   async run(ctx: ScenarioContext): Promise<ScenarioResult> {
     const { branch } = ctx;
@@ -35,14 +44,31 @@ export const f4NetworkPartition: Scenario = {
     const samples: ScenarioResult["samples"] = [];
     const metrics: Record<string, unknown> = {};
 
+    if (!iptablesPartitionAvailable()) {
+      metrics["skipped"] = true;
+      metrics["skip_reason"] = "iptables + passwordless sudo not available on this host";
+      return {
+        scenario: "f4-network-partition",
+        branch,
+        startTime,
+        endTime: Date.now(),
+        durationMs: Date.now() - startTime,
+        metrics,
+        samples,
+        summary: `F4: SKIPPED — ${metrics["skip_reason"]}`,
+      };
+    }
+
     let cluster: Awaited<ReturnType<typeof startCluster>> | null = null;
-    const peers: { peer: WebRtcPeer; node: CascadeNode; did: string }[] = [];
+    const peers: { peer: WebRtcPeer; node: CascadeNode; session: ClusterPeerSession }[] = [];
+    let clusterSessions: ClusterPeerSession[] = [];
+    let probeSession: ClusterPeerSession | null = null;
 
     try {
       cluster = await startCluster({
         nodeCount: 2,
         maxParticipantsPerNode: MAX_PER_NODE,
-        basePort: 13500,
+        wsBasePort: 13500,
       });
 
       const didToNode = new Map<string, CascadeNode>();
@@ -55,14 +81,25 @@ export const f4NetworkPartition: Scenario = {
       }
       const [nodeA, nodeB] = cluster.nodes;
 
+      clusterSessions = await provisionClusterPeers({
+        nodes: cluster.nodes.map((n) => ({
+          nodeId: n.did,
+          admin: n.client,
+          port: n.port,
+        })),
+        count: 5,
+        labelPrefix: "f4-peer",
+      });
+
       // 5 peers — first 4 to A, 5th cascades to B.
       for (let i = 0; i < 5; i++) {
-        const peer = new WebRtcPeer(`f4-peer-${i}`, { audioToneHz: 440 + i * 30 });
+        const cs = clusterSessions[i];
+        const peer = new WebRtcPeer(cs.label, { audioToneHz: 440 + i * 30 });
         await peer.attachSyntheticStream();
-        const did = `did:windtunnel:f4:peer-${i}`;
         const offer = await peer.createOffer();
         let landed: CascadeNode = nodeA;
-        let session = await nodeA.client.call<{
+        const aClient = cs.byNode.get(nodeA.did)!.client;
+        let session = await aClient.call<{
           sdpAnswer: string;
           participantId: string;
           redirectTo?: string;
@@ -71,11 +108,11 @@ export const f4NetworkPartition: Scenario = {
           neighbourhoodUrl: NEIGHBOURHOOD,
           roomName: ROOM_NAME,
           sdpOffer: JSON.stringify(offer),
-          agentDidOverride: did,
         });
         if (session.redirectTo) {
           const target = didToNode.get(session.redirectTo)!;
-          session = await target.client.call<{
+          const targetClient = cs.byNode.get(target.did)!.client;
+          session = await targetClient.call<{
             sdpAnswer: string;
             participantId: string;
             redirectTo?: string;
@@ -84,12 +121,11 @@ export const f4NetworkPartition: Scenario = {
             neighbourhoodUrl: NEIGHBOURHOOD,
             roomName: ROOM_NAME,
             sdpOffer: JSON.stringify(offer),
-            agentDidOverride: did,
           });
           landed = target;
         }
         await peer.acceptAnswer(JSON.parse(session.sdpAnswer));
-        peers.push({ peer, node: landed, did });
+        peers.push({ peer, node: landed, session: cs });
       }
 
       const preA = peers.filter((p) => p.node === nodeA).length;
@@ -97,29 +133,38 @@ export const f4NetworkPartition: Scenario = {
       metrics["preParitionNodeA"] = preA;
       metrics["preParitionNodeB"] = preB;
 
-      // Partition: re-issue enableCascade with empty peer list, so
-      // neither side considers the other a cascade target.
+      // Partition: install iptables DROP for both gossip ports.  The
+      // gossip transport's outbound send becomes a no-op silently and
+      // each side's known-nodes view stops being refreshed by the
+      // peer's announces.
       const partitionStart = Date.now();
-      await nodeA.client.call("sfu.enableCascade", {
-        localDid: nodeA.did,
-        maxParticipantsPerNode: MAX_PER_NODE,
-        peers: [],
-      });
-      await nodeB.client.call("sfu.enableCascade", {
-        localDid: nodeB.did,
-        maxParticipantsPerNode: MAX_PER_NODE,
-        peers: [],
-      });
+      const partitionOk = dropTcpPorts([nodeA.gossipPort, nodeB.gossipPort]);
+      metrics["partitionApplied"] = partitionOk;
+      if (!partitionOk) {
+        throw new Error("F4 dropTcpPorts failed despite iptablesPartitionAvailable()");
+      }
+      // Wait for one announce-tick worth of TTL.
+      await new Promise<void>((r) => setTimeout(r, 3000));
       const partitionMs = Date.now() - partitionStart;
       metrics["partitionMs"] = partitionMs;
 
-      // Probe: new peer joining A should NOT see redirectTo even
-      // though A is at MAX_PER_NODE (no cascade target available
-      // post-partition).
-      const probe = new WebRtcPeer("f4-probe", { audioToneHz: 880 });
+      // Probe: a fresh peer joining A should NOT be redirected — B is
+      // no longer reachable from A's view.
+      const [probeCs] = await provisionClusterPeers({
+        nodes: cluster.nodes.map((n) => ({
+          nodeId: n.did,
+          admin: n.client,
+          port: n.port,
+        })),
+        count: 1,
+        labelPrefix: "f4-probe",
+      });
+      probeSession = probeCs;
+      const probe = new WebRtcPeer(probeCs.label, { audioToneHz: 880 });
       await probe.attachSyntheticStream();
       const probeOffer = await probe.createOffer();
-      const probeSession = await nodeA.client.call<{
+      const probeAClient = probeCs.byNode.get(nodeA.did)!.client;
+      const probeResp = await probeAClient.call<{
         sdpAnswer: string;
         participantId: string;
         redirectTo?: string;
@@ -128,21 +173,19 @@ export const f4NetworkPartition: Scenario = {
         neighbourhoodUrl: NEIGHBOURHOOD,
         roomName: ROOM_NAME,
         sdpOffer: JSON.stringify(probeOffer),
-        agentDidOverride: "did:windtunnel:f4:probe",
       });
-      metrics["probeRedirected"] = !!probeSession.redirectTo;
-      metrics["probeRedirectTarget"] = probeSession.redirectTo ?? null;
-      if (probeSession.redirectTo) {
+      metrics["probeRedirected"] = !!probeResp.redirectTo;
+      metrics["probeRedirectTarget"] = probeResp.redirectTo ?? null;
+      if (probeResp.redirectTo) {
         await probe.close().catch(() => {});
       } else {
         try {
-          await probe.acceptAnswer(JSON.parse(probeSession.sdpAnswer));
+          await probe.acceptAnswer(JSON.parse(probeResp.sdpAnswer));
         } catch {}
         try {
-          await nodeA.client.call("sfu.callLeave", {
+          await probeAClient.call("sfu.callLeave", {
             neighbourhoodUrl: NEIGHBOURHOOD,
             roomName: ROOM_NAME,
-            agentDidOverride: "did:windtunnel:f4:probe",
           });
         } catch {}
         await probe.close().catch(() => {});
@@ -166,17 +209,21 @@ export const f4NetworkPartition: Scenario = {
         timestamp: Date.now(),
       });
     } finally {
-      for (const { peer, node, did } of peers) {
+      clearPartition();
+      for (const { peer, node, session } of peers) {
         try {
-          await node.client.call("sfu.callLeave", {
+          await session.byNode.get(node.did)!.client.call("sfu.callLeave", {
             neighbourhoodUrl: NEIGHBOURHOOD,
             roomName: ROOM_NAME,
-            agentDidOverride: did,
           });
         } catch {}
         try {
           await peer.close();
         } catch {}
+      }
+      await disconnectClusterPeers(clusterSessions);
+      if (probeSession) {
+        await disconnectClusterPeers([probeSession]);
       }
       if (cluster) {
         try {
