@@ -24,7 +24,7 @@ header "Literal Expression Language Verification"
 step "1. literal://string:hello"
 assert_expression_eq \
     "literal://string:hello" \
-    '.data' \
+    '.data | fromjson' \
     "hello" \
     "string-literal"
 
@@ -33,7 +33,7 @@ assert_expression_eq \
 step "2. literal://number:42"
 assert_expression_eq \
     "literal://number:42" \
-    '.data' \
+    '.data | fromjson' \
     "42" \
     "number-literal"
 
@@ -42,7 +42,7 @@ assert_expression_eq \
 step "3. literal://boolean:true"
 assert_expression_eq \
     "literal://boolean:true" \
-    '.data' \
+    '.data | fromjson' \
     "true" \
     "boolean-literal"
 
@@ -51,7 +51,7 @@ assert_expression_eq \
 step "4. literal://json:{\"name\":\"test\",\"value\":1}"
 assert_expression_eq \
     'literal://json:{"name":"test","value":1}' \
-    '.data.name' \
+    '.data | fromjson | .name' \
     "test" \
     "json-object-literal"
 
