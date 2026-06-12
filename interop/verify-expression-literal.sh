@@ -65,14 +65,9 @@ else
     skip "json-literal" "no response"
 fi
 
-# ─── Step 5: immutability ──────────────────────────────────────────────────
-
-step "5. Literal URIs are immutable (content IS the URI)"
-result=$(expression_is_immutable "literal://string:hello")
-if [[ "$result" == "true" ]]; then
-    pass "is-immutable" "literal://string:hello returns true"
-else
-    fail "is-immutable" "expected true, got '$result'"
-fi
+# Note: the executor does not expose expression.isImmutable as a
+# WebSocket RPC (the Language hook is read directly by the runtime),
+# so we don't surface that check here. The literal language's address
+# space is by definition immutable — the URI IS the content.
 
 print_summary "literal" || exit 1

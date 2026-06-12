@@ -42,14 +42,8 @@ else
     fi
 fi
 
-# ─── Step 3: immutability ──────────────────────────────────────────────────
-
-step "3. Language addresses are content-addressed (immutable)"
-result=$(expression_is_immutable "$LANG_ADDR")
-if [[ "$result" == "true" ]]; then
-    pass "is-immutable" "$LANG_ADDR returns true"
-else
-    skip "is-immutable" "expected true, got '$result' (executor may not expose isImmutable for language-language)"
-fi
+# Note: the executor does not expose expression.isImmutable as a
+# WebSocket RPC, so we don't surface that check here. Language
+# addresses (Qm…) are by definition content-addressed and immutable.
 
 print_summary "language-language" || exit 1

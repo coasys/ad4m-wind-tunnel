@@ -31,13 +31,6 @@ expression_create() {
     echo "$result" | jq -r '. // empty' 2>/dev/null
 }
 
-# Usage: expression_is_immutable URI
-# Returns "true" or "false".
-expression_is_immutable() {
-    local address="$1"
-    ad4m_rpc expression-is-immutable "$address" 2>/dev/null | jq -r '. // "false"' 2>/dev/null
-}
-
 # Usage: assert_expression_eq URI JQ_FILTER EXPECTED_VALUE TEST_NAME
 # Calls expression.get, applies a jq filter against the result, and
 # checks the value matches EXPECTED_VALUE.

@@ -105,9 +105,6 @@ def make_parser():
     ec.add_argument("language_address")
     ec.add_argument("content_json")
 
-    eio = sub.add_parser("expression-is-immutable")
-    eio.add_argument("address")
-
     # raw / generic
     rw = sub.add_parser("raw")
     rw.add_argument("rpc_type")
@@ -232,8 +229,6 @@ def build_rpc(args):
             "languageAddress": args.language_address,
             "content": json.loads(args.content_json),
         }
-    if cmd == "expression-is-immutable":
-        return "expression.isImmutableExpression", {"url": args.address}
     if cmd == "raw":
         return args.rpc_type, json.loads(args.params_json)
 

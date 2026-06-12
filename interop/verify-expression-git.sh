@@ -65,31 +65,14 @@ step "3. Resolving a blob via main branch..."
 README_URI="git+https://github.com/coasys/git-expression-language.git#main:README.md"
 assert_expression_present "$README_URI" "blob-main"
 
-# ─── Step 4: Mutability flag ───────────────────────────────────────────────
+# ─── Step 4: SHA-pinned resolution ─────────────────────────────────────────
 
-step "4. Branch URIs are NOT immutable"
-result=$(expression_is_immutable "$README_URI")
-if [[ "$result" == "false" ]]; then
-    pass "branch-not-immutable" "branch URI returns false"
-else
-    skip "branch-not-immutable" "expected false, got '$result'"
-fi
-
-# ─── Step 5: SHA-pinned URI is immutable ───────────────────────────────────
-
-step "5. Discovering a SHA for SHA-pinned resolution..."
+step "4. Discovering a SHA for SHA-pinned resolution..."
 SHA=$(curl -sf "https://api.github.com/repos/coasys/git-expression-language/commits/main" 2>/dev/null | jq -r '.sha // empty' 2>/dev/null)
 if [[ -n "$SHA" && "$SHA" != "null" ]]; then
     SHA_URI="git+https://github.com/coasys/git-expression-language.git#${SHA}:README.md"
     pass "sha-lookup" "${SHA:0:12}"
-    step "5a. SHA-pinned URI is immutable"
-    sha_immutable=$(expression_is_immutable "$SHA_URI")
-    if [[ "$sha_immutable" == "true" ]]; then
-        pass "sha-immutable" "SHA URI returns true"
-    else
-        fail "sha-immutable" "expected true, got '$sha_immutable'"
-    fi
-    step "5b. SHA-pinned URI resolves to same content"
+    step "4a. SHA-pinned URI resolves to content"
     assert_expression_present "$SHA_URI" "sha-resolution"
 else
     skip "sha-lookup" "GitHub API unreachable from this host"
