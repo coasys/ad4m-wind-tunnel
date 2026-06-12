@@ -166,6 +166,25 @@ How each language relates to the broader protocol ecosystem.
 
 ---
 
+## Expression Languages
+
+Link languages back Perspectives; Expression Languages own URI schemes and resolve URIs in those schemes to `Expression<T>` records. An agent typically installs one Link Language per Neighbourhood and many Expression Languages — every URI scheme an app dereferences needs a registered Expression Language.
+
+|  | literal | language-language | git-expression |
+|--|---------|-------------------|----------------|
+| **Repo** | Bootstrap (in AD4M) | Bootstrap (in AD4M) | [git-expression-language](https://github.com/coasys/git-expression-language) |
+| **Scheme** | `literal://<type>:<value>` | `Qm…` (content-addressed) | `git+https://<host>/<o>/<r>.git#<ref>:<path>` |
+| **Provider scope** | Inline (content IS the URI) | Bootstrap CDN | Any Git host (GitHub, GitLab, Gitea, raw HTTP fallback) |
+| **Stateless** | ✅ | ✅ (cache only) | ✅ (cache only) |
+| **Immutable URIs** | ✅ (always — content addressed) | ✅ (always — content addressed) | When `<ref>` is a SHA |
+| **Sub-content addressing** | N/A | N/A | `?lines=`, `?bytes=`, `?jsonpath=`, `?fields=`, `?format=`, `?recursive=` |
+| **Tree listings** | N/A | N/A | ✅ (trailing-slash subject) |
+| **Verification** | [`verify-expression-literal.sh`](interop/verify-expression-literal.sh) | [`verify-expression-language-language.sh`](interop/verify-expression-language-language.sh) | [`verify-expression-git.sh`](interop/verify-expression-git.sh) |
+
+For building new Expression Languages, see [`coasys/ad4m-expression-language-template`](https://github.com/coasys/ad4m-expression-language-template) — the same scaffolding pattern the Link Language template uses, adapted for `expression: { get, isImmutable, … }`.
+
+---
+
 ## Summary: Choosing a Link Language
 
 | If you need... | Use |
