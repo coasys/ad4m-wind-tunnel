@@ -196,9 +196,6 @@ else
         else
             fail "link-files" "Expected ≥3 link files, found $FILE_COUNT"
         fi
-    else
-        warn "Could not find a Git repo under $LANG_ROOT"
-        skip "repo-inspection" "Repo path may differ from expected layout"
     fi
 fi
 
