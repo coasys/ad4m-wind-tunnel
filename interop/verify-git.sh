@@ -61,11 +61,11 @@ fi
 step "2. Publishing Git link language bundle..."
 
 PUBLISH_RESP=$(ad4m_rpc language-publish \
+    --possible-template-params '["REMOTE_URL","DEFAULT_BRANCH","AUTH_TOKEN","MERGE_POLICY","PUSH_DEBOUNCE_MS"]' \
+    --source-code-link "https://github.com/coasys/git-link-language" \
     "$GIT_LANG_BUNDLE" \
     "git-link-language" \
-    "AD4M Link Language backing Perspectives with a Git repository" \
-    '["REMOTE_URL","DEFAULT_BRANCH","AUTH_TOKEN","MERGE_POLICY","PUSH_DEBOUNCE_MS"]' \
-    "https://github.com/coasys/git-link-language" 2>/dev/null) || PUBLISH_RESP=""
+    "AD4M Link Language backing Perspectives with a Git repository" 2>/dev/null) || PUBLISH_RESP=""
 
 SOURCE_HASH=$(echo "$PUBLISH_RESP" | jq -r '.address // empty' 2>/dev/null)
 
