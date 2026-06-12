@@ -103,8 +103,11 @@ Proves each AD4M link language correctly reads/writes to its native protocol bac
 | **ActivityPub** | [ap-link-language](https://github.com/coasys/ap-link-language) | HTTP (AP federation) | [Mastodon](https://joinmastodon.org) |
 | **NextGraph** | [nextgraph-link-language](https://github.com/coasys/nextgraph-link-language) | Websockets | [NextGraph](https://nextgraph.org/) |
 | **Holochain** | [p-diff-sync](https://github.com/coasys/ad4m/tree/dev/bootstrap-languages/p-diff-sync) | Kitsune (Iroh) | [Holochain Launcher](https://www.holochain.org/) |
+| **Git** | [git-link-language](https://github.com/coasys/git-link-language) | Local filesystem (Git repo) ¹ | [`git` CLI](https://git-scm.com/) |
 
-See [`CAPABILITIES.md`](CAPABILITIES.md) for a full capability matrix across all 8 languages.
+¹ v1 is local-first only — automated remote sync (`git fetch`/`push`) gates on a binary HTTP host enhancement; see [spec §11.2](https://github.com/coasys/git-link-language/blob/main/README.md#known-limitation-remote-sync).
+
+See [`CAPABILITIES.md`](CAPABILITIES.md) for a full capability matrix across all 10 languages.
 
 #### Single-Device Backend Verification (`interop/`)
 
@@ -119,6 +122,7 @@ cd interop
 ./verify-ipfs.sh    # Test IPFS → Kubo
 ./verify-solid.sh   # Test Solid → CSS pod
 ./verify-hypercore.sh # Test Hypercore → sidecar gateway
+./verify-git.sh     # Test Git → local repo (no Docker, no daemon)
 ./teardown.sh       # Stop all services
 ```
 

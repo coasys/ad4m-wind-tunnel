@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common.sh"
 load_config
 
-ALL_LANGUAGES=(holochain activitypub atproto nostr matrix solid ipfs hypercore)
+ALL_LANGUAGES=(holochain activitypub atproto nostr matrix solid ipfs hypercore git)
 
 # ─── Argument parsing ────────────────────────────────────────────────────────
 
