@@ -97,6 +97,17 @@ def make_parser():
     nj = sub.add_parser("neighbourhood-join")
     nj.add_argument("url")
 
+    # expression
+    eg = sub.add_parser("expression-get")
+    eg.add_argument("address")
+
+    ec = sub.add_parser("expression-create")
+    ec.add_argument("language_address")
+    ec.add_argument("content_json")
+
+    eio = sub.add_parser("expression-is-immutable")
+    eio.add_argument("address")
+
     # raw / generic
     rw = sub.add_parser("raw")
     rw.add_argument("rpc_type")
@@ -214,6 +225,15 @@ def build_rpc(args):
         }
     if cmd == "neighbourhood-join":
         return "neighbourhood.join", {"url": args.url}
+    if cmd == "expression-get":
+        return "expression.get", {"url": args.address}
+    if cmd == "expression-create":
+        return "expression.create", {
+            "languageAddress": args.language_address,
+            "content": json.loads(args.content_json),
+        }
+    if cmd == "expression-is-immutable":
+        return "expression.isImmutableExpression", {"url": args.address}
     if cmd == "raw":
         return args.rpc_type, json.loads(args.params_json)
 

@@ -124,7 +124,14 @@ cd interop
 ./verify-hypercore.sh # Test Hypercore → sidecar gateway
 ./verify-git.sh     # Test Git → local repo (no Docker, no daemon)
 ./teardown.sh       # Stop all services
+
+# Expression language verification (no Docker required)
+./verify-expression-literal.sh           # literal://<type>:<value>
+./verify-expression-language-language.sh # Qm… bootstrap language addresses
+./verify-expression-git.sh               # git+https://<host>/<o>/<r>.git#<ref>:<path>
 ```
+
+Expression languages resolve URIs to `Expression` records on demand and do not require backend infrastructure beyond what the URI scheme targets (`literal://` is in-executor; `language-language` reaches the bootstrap CDN; `git+https://` reaches the named Git host's REST API).
 
 See [`interop/README.md`](interop/README.md) for detailed setup and per-protocol notes.
 
