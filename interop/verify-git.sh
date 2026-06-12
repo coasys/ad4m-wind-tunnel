@@ -77,12 +77,19 @@ else
     print_summary "Git" || exit 1
 fi
 
+# Strip ANSI colour codes + extract the final non-blank line from helper
+# return values. Helpers in common.sh echo `step`/`info` to stdout alongside
+# the value, so command substitution picks them all up.
+extract_last_line() {
+    sed 's/\x1B\[[0-9;]*[mGK]//g' | grep -v '^[[:space:]]*$' | tail -n 1 | xargs
+}
+
 # ─── Step 3: Configure language with DEFAULT_BRANCH=main ────────────────────
 
 step "3. Configuring Git link language..."
 TEMPLATE_DATA=$(jq -n '{"DEFAULT_BRANCH":"main"}')
 
-CONFIGURED_LANG=$(publish_and_configure_language "$SOURCE_HASH" "$TEMPLATE_DATA" 2>/dev/null) || true
+CONFIGURED_LANG=$(publish_and_configure_language "$SOURCE_HASH" "$TEMPLATE_DATA" 2>/dev/null | extract_last_line) || true
 if [[ -n "$CONFIGURED_LANG" && "$CONFIGURED_LANG" != "null" ]]; then
     pass "language-configure" "Configured: $CONFIGURED_LANG"
 else
@@ -94,13 +101,14 @@ fi
 # ─── Step 4: Create perspective + neighbourhood ─────────────────────────────
 
 step "4. Creating perspective and neighbourhood..."
-PERSPECTIVE_UUID=$(create_test_perspective "interop-git-${RUN_ID}" 2>/dev/null) || true
+PERSPECTIVE_UUID=$(create_test_perspective "interop-git-${RUN_ID}" 2>/dev/null | extract_last_line) || true
 if [[ -z "$PERSPECTIVE_UUID" ]]; then
     fail "perspective-create" "Could not create perspective"
     print_summary "Git" || exit 1
 fi
+pass "perspective-create" "Perspective UUID: $PERSPECTIVE_UUID"
 
-NEIGHBOURHOOD_URL=$(create_test_neighbourhood "$PERSPECTIVE_UUID" "$CONFIGURED_LANG" 2>/dev/null) || true
+NEIGHBOURHOOD_URL=$(create_test_neighbourhood "$PERSPECTIVE_UUID" "$CONFIGURED_LANG" 2>/dev/null | extract_last_line) || true
 if [[ -n "$NEIGHBOURHOOD_URL" ]]; then
     pass "neighbourhood-create" "Published neighbourhood"
 else
