@@ -155,16 +155,26 @@ if [[ -z "$LANG_ROOT" ]]; then
     skip "repo-inspection" "Set EXECUTOR_DATA_DIR to the executor's data directory"
 else
     info "Language directory: $LANG_ROOT"
-    REPO_DIR=""
-    for sub in storage/repo .languages/repo repo; do
-        if [[ -d "$LANG_ROOT/$sub/.git" ]]; then
-            REPO_DIR="$LANG_ROOT/$sub"
-            break
+    # Look for the executor's KV file. If the host's File I/O extension is
+    # not installed, the language's storage is in-memory only — visible
+    # only via the language's own queries, never written to disk.
+    KV_FILE="$LANG_ROOT/ad4m-language-kv.json"
+    if [[ ! -f "$KV_FILE" ]]; then
+        warn "No KV file at $KV_FILE — executor's File I/O extension is likely not installed."
+        info "Language storage is in-memory only in this executor build; .git/ + links/ cannot be inspected from disk."
+        skip "repo-inspection" "In-memory storage; inspected via AD4M API instead (link count verified above)"
+        REPO_DIR=""
+    else
+        REPO_DIR=""
+        for sub in repo storage/repo .languages/repo; do
+            if [[ -d "$LANG_ROOT/$sub/.git" ]]; then
+                REPO_DIR="$LANG_ROOT/$sub"
+                break
+            fi
+        done
+        if [[ -z "$REPO_DIR" ]]; then
+            REPO_DIR=$(find "$LANG_ROOT" -maxdepth 4 -type d -name '.git' 2>/dev/null | head -1 | xargs -I{} dirname {})
         fi
-    done
-    # Fall back to find
-    if [[ -z "$REPO_DIR" ]]; then
-        REPO_DIR=$(find "$LANG_ROOT" -maxdepth 4 -type d -name '.git' 2>/dev/null | head -1 | xargs -I{} dirname {})
     fi
     if [[ -n "$REPO_DIR" && -d "$REPO_DIR/.git" ]]; then
         pass "repo-inspection" "Found Git repo at $REPO_DIR"
