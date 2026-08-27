@@ -1,0 +1,28 @@
+# link-server — self-hosted AD4M link language backend
+# Port 3456: HTTP (auth, commit, sync, peers, ACL) + WebSocket (real-time diff push)
+services:
+  link-server:
+    build:
+      context: ../../ad4m/link-server
+      dockerfile: Dockerfile
+    container_name: ad4m-test-link-server
+    ports:
+      - "3456:3456"
+    volumes:
+      - link-server-data:/data
+    environment:
+      - PORT=3456
+      - DATA_DIR=/data
+      # AUTO_ADMIT: any authenticated agent is added to the room's ACL on
+      # first contact. Required for C1 convergence — Agent B must be able to
+      # join the room Agent A created without explicit admin approval.
+      - AUTO_ADMIT=true
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3456/health').then(r=>{if(!r.ok)throw r.status}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  link-server-data:

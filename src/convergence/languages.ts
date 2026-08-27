@@ -451,6 +451,30 @@ export const CONVERGENCE_LANGUAGES: ConvergenceLanguage[] = [
       };
     },
   },
+
+  {
+    // link-server (server-link-language) — the SIMPLEST backend: a single
+    // HTTP+WebSocket server (link-server) with DID auth and an OR-Set link
+    // store in SQLite. Both agents connect to the same server; real-time
+    // convergence rides the WebSocket diff push channel. Unlike every other
+    // convergence entry, the language lives INSIDE the ad4m monorepo
+    // (bootstrap-languages/server-link-language) rather than as a sibling repo.
+    // AUTO_ADMIT=true on the Docker container so Agent B's DID auth succeeds
+    // without Agent A explicitly adding them to the room ACL.
+    id: "link-server",
+    bundlePath: resolve(WORKSPACE_ROOT, "ad4m/bootstrap-languages/server-link-language/build/bundle.js"),
+    possibleTemplateParams: ["SERVER_URL", "ROOM_ID"],
+    backend: {
+      compose: "docker-compose.link-server.yml",
+      healthTcp: { host: "127.0.0.1", port: 3456 },
+    },
+    makeTemplateData(neighbourhoodId: string): Record<string, string> {
+      return {
+        SERVER_URL: "http://127.0.0.1:3456",
+        ROOM_ID: neighbourhoodId,
+      };
+    },
+  },
 ];
 
 export function getConvergenceLanguage(id: string): ConvergenceLanguage | undefined {
