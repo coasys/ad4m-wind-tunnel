@@ -107,6 +107,15 @@ JS bundle the executor installs), `possibleTemplateParams`,
 `makeTemplateData(neighbourhoodId)`, and optional `backend { compose, healthTcp }`.
 The scenario reads everything else from there.
 
+### link-server lives inside the ad4m monorepo
+
+Unlike every other convergence language (sibling repos next to the wind
+tunnel), `server-link-language` lives at
+`ad4m/bootstrap-languages/server-link-language/`. Its Docker compose
+(`infra/docker-compose.link-server.yml`) builds from `../../ad4m/link-server`.
+The link-server requires `AUTO_ADMIT=true` for C1 — without it, Agent B cannot
+join the room Agent A created. Backend health probes TCP on port 3456.
+
 ### IPFS is the two-node backend (operational note)
 
 Unlike every other C1 backend (one shared server the co-located agents both
@@ -160,10 +169,24 @@ mock transport does not enforce relay/runtime semantics.
    internal store while `perspective.queryLinks` shows nothing — the C1 poll
    times out at `A=local, B=local`.
 
-When C1 reports "DID NOT CONVERGE", walk these three in order before suspecting
+4. **`httpFetch` (host.js) returns a string, not `{status, body}`.**
+   The ALDK type declaration says `httpFetch` returns
+   `Promise<{status: number, body: string}>`, but `host.js`'s
+   `httpFetchImpl` returns just the response body text on success and
+   throws for non-ok HTTP status. A `DenoTransport.fetch()` that trusts
+   the type declaration will read `res.status` → `undefined`,
+   `res.body` → `undefined`, silently losing every response body. Auth
+   gets `undefined.challenge` → TypeError → caught by `init()`'s
+   try/catch → language continues without a session → zero downstream
+   HTTP ever fires. The C1 symptom: server logs show auth POSTs but
+   zero commit/sync/render requests. Fix: handle `typeof res === "string"`
+   in the transport layer (see `server-link-language/src/adapters-deno.ts`
+   and its `AGENTS.md` for the full pattern).
+
+When C1 reports "DID NOT CONVERGE", walk these four in order before suspecting
 the harness: (a) are events in the relay DB? (b) does the REQ filter use a
 single-letter key? (c) does the language emit inbound folds, not just return
-them?
+them? (d) does the transport handle `httpFetch`'s actual return shape?
 
 ## Conventions
 
