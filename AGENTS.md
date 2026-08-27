@@ -169,24 +169,10 @@ mock transport does not enforce relay/runtime semantics.
    internal store while `perspective.queryLinks` shows nothing — the C1 poll
    times out at `A=local, B=local`.
 
-4. **`httpFetch` (host.js) returns a string, not `{status, body}`.**
-   The ALDK type declaration says `httpFetch` returns
-   `Promise<{status: number, body: string}>`, but `host.js`'s
-   `httpFetchImpl` returns just the response body text on success and
-   throws for non-ok HTTP status. A `DenoTransport.fetch()` that trusts
-   the type declaration will read `res.status` → `undefined`,
-   `res.body` → `undefined`, silently losing every response body. Auth
-   gets `undefined.challenge` → TypeError → caught by `init()`'s
-   try/catch → language continues without a session → zero downstream
-   HTTP ever fires. The C1 symptom: server logs show auth POSTs but
-   zero commit/sync/render requests. Fix: handle `typeof res === "string"`
-   in the transport layer (see `server-link-language/src/adapters-deno.ts`
-   and its `AGENTS.md` for the full pattern).
-
-When C1 reports "DID NOT CONVERGE", walk these four in order before suspecting
+When C1 reports "DID NOT CONVERGE", walk these three in order before suspecting
 the harness: (a) are events in the relay DB? (b) does the REQ filter use a
 single-letter key? (c) does the language emit inbound folds, not just return
-them? (d) does the transport handle `httpFetch`'s actual return shape?
+them?
 
 ## Conventions
 
