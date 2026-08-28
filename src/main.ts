@@ -40,6 +40,7 @@ import {
   t11CascadeRebalance,
   // Session surface
   t16SessionLifecycle, t17SessionDataChannel,
+  t18MeshSessionLifecycle, t19MeshDataChannel,
 } from "./scenarios/index.js";
 import { consoleReport, jsonReport, comparisonReport } from "./reporters.js";
 import { config, validateAdamRepo } from "./config.js";
@@ -80,6 +81,7 @@ const ALL_SCENARIOS: Scenario[] = [
   t11CascadeRebalance,
   // Session surface
   t16SessionLifecycle, t17SessionDataChannel,
+  t18MeshSessionLifecycle, t19MeshDataChannel,
 ];
 
 function parseArgs() {
