@@ -73,3 +73,5 @@ export { t11CascadeRebalance } from "./t11-cascade-rebalance.js";
 export { t12DeferredTracks } from "./t12-deferred-tracks.js";
 export { t13PeerDepartureMedia } from "./t13-peer-departure-media.js";
 export { t14MediaRoutingCorrectness } from "./t14-media-routing-correctness.js";
+export { t16SessionLifecycle } from "./t16-session-lifecycle.js";
+export { t17SessionDataChannel } from "./t17-session-data-channel.js";
