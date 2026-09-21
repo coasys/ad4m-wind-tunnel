@@ -1,5 +1,9 @@
 /**
  * AD4M Wind Tunnel — Main Runner
+ *
+ * Core executor performance and scaling scenarios.
+ * WebRTC/SFU scenarios moved to coasys/ad4m (PR #712) and coasys/we (PR #159).
+ * Agent harness scenarios (A2, A4, A5) moved to coasys/ad4m integration tests.
  */
 
 import { existsSync, mkdirSync, rmSync } from "fs";
@@ -14,33 +18,9 @@ import {
   m4WriteLoadUnderSync, m5ConcurrentNeighbourhoods,
   c1Convergence,
   a3McpThroughput,
-  a2ProvisionConnect,
-  a4Waker,
-  a5AvLoop,
   s9NeighbourhoodMemoryLeak,
   s10SubscriptionFanout, s12PersistenceColdQuery, s13ReadWriteMix, s14MultiPerspectiveLoad,
   s15LeakAttribution,
-  // WebRTC mesh baselines
-  w1Mesh2Peer, w1mMeshMultiMachine, w2Mesh4Peer, w3MeshRtt, w4MeshBandwidthScaling,
-  w5TurnFallback,
-  // SFU topology
-  t1Sfu5Peer, t2Sfu10Peer, t3SfuCascade2Node, t4SfuCascade3Node,
-  t5TopologyTable, t6PipeHandshake,
-  t7SfuCascadeMedia, t8ConcurrentJoinRace, t9TrackDidAttribution, t10SimulcastLayerSelection,
-  // Mid-call topology transitions
-  m1MeshToSfu, m2SfuToMesh, m3CascadeFailover, m4SfuOfflineFallback,
-  // Faults
-  f1MeshPacketLoss, f2SfuPacketLoss, f3OneWayNat, f4NetworkPartition,
-  f5RenegotiationFlood, f6NonMemberJoin, f7BadCapability,
-  f8StuckRenegotiationRecovery, f9CascadeNodeCrashCleanup,
-  // SFU scale
-  s1Sfu20Peer, s2SfuCascade4Node, s3MaxParticipantsEnforced,
-  s4SfuMemoryChurn,
-  // SFU rebalancing
-  t11CascadeRebalance,
-  // Session surface
-  t16SessionLifecycle, t17SessionDataChannel,
-  t18MeshSessionLifecycle, t19MeshDataChannel,
 } from "./scenarios/index.js";
 import { consoleReport, jsonReport, comparisonReport } from "./reporters.js";
 import { config, validateAdamRepo } from "./config.js";
@@ -48,40 +28,15 @@ import { config, validateAdamRepo } from "./config.js";
 const RESULTS_DIR = config.resultsDir;
 
 const ALL_SCENARIOS: Scenario[] = [
-  // Core executor scenarios
   s1ColdStart, s2LinkThroughput, s2bMillionLinks, s3PerspectiveScaling, s4LanguageInstallStorm,
   s5QueryScaling, s6ApiConcurrency, s7MemoryStability, s8SubjectClassQueries,
   m1NeighbourhoodSync, m2MultiExecutorScale, m3LinkLanguageComparison,
   m4WriteLoadUnderSync, m5ConcurrentNeighbourhoods,
   c1Convergence,
   a3McpThroughput,
-  a2ProvisionConnect,
-  a4Waker,
-  a5AvLoop,
   s9NeighbourhoodMemoryLeak,
   s10SubscriptionFanout, s12PersistenceColdQuery, s13ReadWriteMix, s14MultiPerspectiveLoad,
   s15LeakAttribution,
-  // WebRTC mesh baselines
-  w1Mesh2Peer, w1mMeshMultiMachine, w2Mesh4Peer, w3MeshRtt, w4MeshBandwidthScaling,
-  w5TurnFallback,
-  // SFU topology
-  t1Sfu5Peer, t2Sfu10Peer, t3SfuCascade2Node, t4SfuCascade3Node,
-  t5TopologyTable, t6PipeHandshake,
-  t7SfuCascadeMedia, t8ConcurrentJoinRace, t9TrackDidAttribution, t10SimulcastLayerSelection,
-  // Mid-call topology transitions
-  m1MeshToSfu, m2SfuToMesh, m3CascadeFailover, m4SfuOfflineFallback,
-  // Faults
-  f1MeshPacketLoss, f2SfuPacketLoss, f3OneWayNat, f4NetworkPartition,
-  f5RenegotiationFlood, f6NonMemberJoin, f7BadCapability,
-  f8StuckRenegotiationRecovery, f9CascadeNodeCrashCleanup,
-  // SFU scale
-  s1Sfu20Peer, s2SfuCascade4Node, s3MaxParticipantsEnforced,
-  s4SfuMemoryChurn,
-  // SFU rebalancing
-  t11CascadeRebalance,
-  // Session surface
-  t16SessionLifecycle, t17SessionDataChannel,
-  t18MeshSessionLifecycle, t19MeshDataChannel,
 ];
 
 function parseArgs() {
@@ -120,46 +75,8 @@ async function runScenariosForBranch(
   for (const scenario of scenarios) {
     console.log(`\n[runner] Running ${scenario.id}: ${scenario.name} on ${branch}...`);
 
-    // Pod-managed scenarios (agent-harness A-series) stand up and tear down
-    // their own Docker environment; the runner does not boot a native executor
-    // or a client for them.
-    if (scenario.managesOwnEnvironment) {
-      console.log(`[runner] ${scenario.id} manages its own environment — skipping native executor`);
-      const ctx: ScenarioContext = {
-        client: undefined as any,
-        branch,
-        port,
-        adminToken: config.adminToken,
-        adamRepoPath: config.adamRepoPath,
-        tmpDirBase: config.tmpDirBase,
-        executorPath: binaryPath || undefined,
-      };
-      try {
-        const result = await scenario.run(ctx);
-        results.push(result);
-        console.log(`[runner] ${scenario.id} ${result.passed ? "PASS" : "FAIL"}: ${result.summary}`);
-      } catch (err: any) {
-        console.error(`[runner] ${scenario.id} CRASHED: ${err.message}`);
-        results.push({
-          scenario: `${scenario.id}-provision-connect`,
-          branch,
-          passed: false,
-          startTime: Date.now(),
-          endTime: Date.now(),
-          durationMs: 0,
-          metrics: { error: err.message },
-          samples: [],
-          summary: `CRASHED: ${err.message}`,
-        });
-      }
-      continue;
-    }
-
     // Fresh executor for each scenario
     const dataPath = join(config.tmpDirBase, `ad4m-wt-data-${dirName}-${scenario.id}`);
-    // S9 in `no-languages` mode boots the executor with --language-language-only
-    // so only the language-language Deno runtime loads. This is set here
-    // because executor flags must be picked at spawn time, not from the scenario.
     const extraArgs: string[] = [];
     if (scenario.id === "s9" && (process.env.S9_MODE || "").toLowerCase() === "no-languages") {
       extraArgs.push("--language-language-only", "true");
@@ -207,7 +124,7 @@ async function runScenariosForBranch(
 
       await client.connect();
 
-      // Generate agent identity (creates the main key needed for JWT minting)
+      // Generate agent identity
       try {
         await client.call("agent.generate", { passphrase: "wind-tunnel-test" });
         console.log(`[runner] Agent identity generated`);
@@ -294,16 +211,9 @@ async function main(): Promise<void> {
   console.log(`Scenarios: ${scenarios.map((s) => s.id).join(", ")}`);
   console.log(`Branches: ${branches.join(", ")}`);
 
-  // Locate binaries. Pod-managed scenarios (agent-harness A-series) run their
-  // own containerised node, so a native executor binary is only required when a
-  // non-pod scenario is selected.
+  // Locate binaries
   const binaryPaths = new Map<string, string>();
-  const needsBinary = scenarios.some((s) => !s.managesOwnEnvironment);
-  if (!needsBinary) {
-    // Non-empty placeholder: pod-managed scenarios ignore it, but the run loop
-    // treats an empty string as "no binary" and would skip the branch.
-    for (const b of branches) binaryPaths.set(b, "pod-managed");
-  } else if (args.executorPath) {
+  if (args.executorPath) {
     for (const b of branches) binaryPaths.set(b, args.executorPath);
   } else if (args.skipBuild) {
     for (const b of branches) {
