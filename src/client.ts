@@ -99,14 +99,16 @@ export class InstrumentedClient {
     }
     const id = String(++this.requestId);
     return new Promise<T>((resolve, reject) => {
-      this.pendingRequests.set(id, { resolve, reject });
-      this.ws!.send(JSON.stringify({ id, type: method, params }));
-      setTimeout(() => {
-        if (this.pendingRequests.has(id)) {
-          this.pendingRequests.delete(id);
-          reject(new Error(`WS request ${method} timed out`));
-        }
+      const timer = setTimeout(() => {
+        if (this.pendingRequests.delete(id)) reject(new Error(`WS request ${method} timed out`));
       }, 120000);
+      // Cleared on settling, or every call would hold the process open for two minutes.
+      const settle = (fn: (v: any) => void) => (v: any) => {
+        clearTimeout(timer);
+        fn(v);
+      };
+      this.pendingRequests.set(id, { resolve: settle(resolve), reject: settle(reject) });
+      this.ws!.send(JSON.stringify({ id, type: method, params }));
     });
   }
 
