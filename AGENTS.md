@@ -54,10 +54,12 @@ src/
 ├── scenario.ts         # Scenario + ScenarioContext + ScenarioResult interfaces
 ├── convergence/
 │   └── languages.ts     # Registry of convergence languages (bundle path, backend, template params)
-└── scenarios/
-    ├── index.ts         # Scenario registry — every scenario must be registered here
-    ├── c1-convergence.ts# Multi-agent convergence (see below)
-    └── ...              # perf/leak/mesh/sfu scenarios
+├── scenarios/
+│   ├── index.ts         # Scenario registry — every scenario must be registered here
+│   ├── c1-convergence.ts# Multi-agent convergence (see below)
+│   ├── u1-we-call-transcription.ts # WE session RPC report (see below)
+│   └── ...              # perf/leak scenarios
+└── we/                  # U1 support: env, WE dev server, UI driver, devtools capture, analysis, report
 ```
 
 The runner boots a **fresh executor per scenario** on `--base-port` (default
@@ -173,6 +175,48 @@ When C1 reports "DID NOT CONVERGE", walk these three in order before suspecting
 the harness: (a) are events in the relay DB? (b) does the REQ filter use a
 single-letter key? (c) does the language emit inbound folds, not just return
 them?
+
+## U1 — WE session RPC report
+
+U1 (`--scenario u1`, opt-in: `main.ts` keeps it out of the default run) drives WE's web app in Chrome
+against the runner's executor and reports WE's executor traffic. Layout of `src/we/`:
+
+| File | Role |
+|------|------|
+| `env.ts` | Finds WE (`WE_REPO`), ad4m-devtools (`AD4M_DEVTOOLS`), the speech clip, ffmpeg, Chrome; lists what is missing |
+| `setup.ts` | Operator steps over WS-RPC: install Whisper, create the user WE runs as |
+| `we-server.ts` | Vite dev server for `apps/we-web` on `port + 50` |
+| `ui.ts` | Playwright steps, selecting by what WE puts in the DOM (text, `aria-label`, `we-icon[name]`, reflected `variant`) |
+| `devtools.ts` | Session + bridge injection, the bridge tap, wire and HTTP capture |
+| `callsites.ts` | Maps stack frames to WE source lines through source maps |
+| `rpc-analysis.ts` | Pure analysis; unit-tested in `rpc-analysis.test.ts` (`npm test`) |
+| `rpc-report.ts` | Markdown report |
+
+Gotchas, each found the hard way:
+
+- **Do not read requests back from the bridge's store.** It is a 2,000-entry ring shared with push
+  events, and creating a space alone pushes ~13,000 `link-added` events — requests fall out of the
+  ring between polls. `TAP_SCRIPT` wraps the bridge's `logOperation` / `completeOperation` /
+  `patchOperation` instead (its WebSocket monitor logs through the object it exposes as
+  `window.__AD4M_DEVTOOLS__`). Push events are counted from Playwright's frames, not the bridge.
+  Capture integrity = bridge request count equals wire request count; U1 fails otherwise.
+- **The bridge's caller stack is unreliable under concurrency.** It stashes a stack when an SDK method
+  is entered and pairs it with the next send in FIFO order, so parallel calls get each other's stacks.
+  U1 keeps only the part after `--- async ws.send ---`, which is V8's own async chain at send time.
+- **The bridge makes its own calls.** Once it finds `<ad4m-connect>` it calls `perspective.all()`
+  (up to 16 times, 2 s apart) to patch prototypes. U1 names the injected script
+  `ad4m-devtools-bridge.js` (`//# sourceURL`) and excludes any request whose outermost frame is in it.
+- **WE UI:** the sidebar rail opens on hover — "Add a space" (`aria-label`) exists only while it is
+  open. A new space is not opened for you. The template picker is the right rail's
+  `we-icon[name="layout"]` button. The call bar's record toggle is `we-icon[name="text-aa"]`; its
+  `variant` is `danger` while transcribing. WE starts transcription by itself on joining a call when a
+  model is installed — pressing the toggle then would turn it off.
+- **`ai.addModel` takes `type`, not `modelType`** (the SDK renames it), and answers only after the
+  weights download — poll `ai.models` and `ai.modelLoadingStatus` instead of awaiting it.
+- **Pad the speech clip with silence.** WE's worklet closes an utterance on a pause; a clip looped back
+  to back is one utterance that never ends.
+- **`NODE_ENV=production` in the shell** puts Vite's dev server in production mode and makes pnpm skip
+  devDependencies. U1 strips it for the processes it starts.
 
 ## Conventions
 

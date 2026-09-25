@@ -43,6 +43,13 @@ npm install
 | S8 | Subject Class Queries | Realistic Flux community graph + SPARQL/link query benchmarks |
 | S9 | Neighbourhood Memory Leak | 10k-link neighbourhood perspective + active WS subscription, RSS regression over multi-minute steady-state |
 | S15 | Leak Attribution | Fast 3-phase RSS slope split between idle / writes / writes+queries to pinpoint which path leaks |
+| M1 | Neighbourhood Sync | Dual-executor neighbourhood create/join/sync |
+| M2 | Multi-Executor Scale | 3 executors, cross-interference measurement |
+| M3 | Link Language Comparison | Docker infra startup + local baseline comparison |
+| M4 | Write Load Under Sync | Dual-executor concurrent write interference measurement |
+| M5 | Concurrent Neighbourhoods | 3 executors × 3 perspectives concurrent load |
+| A3 | MCP Throughput | AI tool call latency via MCP protocol |
+| U1 | WE Call Transcription | WE in Chrome with ad4m-devtools: create a space, open Workshop, join a call, transcribe real speech; report redundant and expensive RPC calls. Opt-in — see below |
 
 ##### S9/S15 phase tuning
 
@@ -60,12 +67,48 @@ S15_SEED=2000   S15_PHASE_SEC=60   S15_RSS_INTERVAL_SEC=2       # defaults
 ```
 
 For absolute leak verification: serial S9 sweep across all 4 modes (~16 min default, ~30 min high-fidelity). For inner-loop dev iteration: S15 (~3.5 min, attributes the leak to write vs query path automatically).
-| M1 | Neighbourhood Sync | Dual-executor neighbourhood create/join/sync |
-| M2 | Multi-Executor Scale | 3 executors, cross-interference measurement |
-| M3 | Link Language Comparison | Docker infra startup + local baseline comparison |
-| M4 | Write Load Under Sync | Dual-executor concurrent write interference measurement |
-| M5 | Concurrent Neighbourhoods | 3 executors × 3 perspectives concurrent load |
-| A1 | MCP Throughput | AI tool call latency via MCP protocol |
+
+##### U1 — WE call + transcription RPC report
+
+U1 runs a real WE session against the executor and reports what WE asked for. It serves WE's web app
+from a WE checkout with Vite, opens it in Chrome with the ad4m-devtools bridge injected (the script the
+devtools extension injects), and acts as a new user:
+
+1. The operator installs a Whisper model on the node and creates a user (WS-RPC, before WE opens).
+2. WE boots signed in as that user; the user sets a display name.
+3. The user creates a shared space from the sidebar and opens it.
+4. The user switches the space to the **Workshop** template.
+5. The user starts a call. WE starts transcription on its own (U1 presses the call bar's record toggle if it does not).
+6. Chrome's fake microphone plays a recorded sentence on a loop, and the executor transcribes it with Whisper.
+7. The user leaves the call; U1 records 15 s more of background traffic.
+
+```bash
+# U1 runs only when named. WE must be installed and built (pnpm install && pnpm setup-workspace).
+WE_REPO=../we AD4M_REPO=../ad4m ./run.sh --skip-build --executor-path /path/to/ad4m-executor --branch dev --scenario u1
+```
+
+It writes `results/<branch>/u1/`:
+
+| File | Content |
+|------|---------|
+| `rpc-report.md` | Verdict, per-phase totals, then redundant calls (same call and same answer, identical calls in flight, polling loops, N+1 fan-out bursts, identical writes, duplicate live subscriptions), expensive calls (slowest, heaviest methods, largest payloads), push-event volume with repeated deliveries, and the transcript. Each finding names the WE source lines that made the call. |
+| `rpc-calls.json` | Every call, event count, phase and step behind the report |
+| `<n>-<step>.png` | A screenshot after each step; `failed-<step>.png` + `.ui.txt` on failure |
+
+U1 passes when every step completes, the transcript contains ≥ 80% of the spoken words, WE shows the
+transcribed text, and the bridge logged every request the wire carried.
+
+| Env var | Default | Description |
+|---------|---------|-------------|
+| `WE_REPO` | `../we` | WE checkout to serve (`apps/we-web`) |
+| `AD4M_DEVTOOLS` | `../ad4m-devtools` | ad4m-devtools checkout; its bridge is rebuilt (with `pnpm`) when its source is newer than its build |
+| `U1_SPEECH_AUDIO` | `$AD4M_REPO/tests/transcription_test.m4a` | Speech clip for the fake microphone (any format ffmpeg reads) |
+| `U1_SPEECH_TEXT` | `If you can read this, transcription is working.` | What the clip says |
+| `U1_WHISPER_MODEL` | `whisper_small` | The model WE's "Add a model" installs. The first run downloads it (~1 GB) |
+| `U1_TRANSCRIBE_SECONDS` | `60` | How long the call is transcribed |
+| `U1_CHROME` | system Chrome/Chromium | Browser binary; unset and none found = Playwright's Chromium (`npx playwright-core install chromium`) |
+| `U1_HEADED` | unset | `1` shows the browser |
+| `FFMPEG` | `ffmpeg` | ffmpeg binary |
 
 #### Results
 
@@ -81,7 +124,8 @@ src/
 ├── scenario.ts       # Scenario interface
 ├── reporters.ts      # Console + JSON reporters
 ├── report.ts         # Comparison report generator
-└── scenarios/        # All scenario implementations
+├── scenarios/        # All scenario implementations
+└── we/               # U1: WE dev server, browser driving, devtools capture, RPC analysis + report
 ```
 
 ---

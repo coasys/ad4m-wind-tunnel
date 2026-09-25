@@ -27,6 +27,8 @@ export interface ScenarioContext {
   adamRepoPath: string;
   /** Base directory for temporary files */
   tmpDirBase: string;
+  /** This branch's results directory, for scenarios that write artifacts beside their JSON result. */
+  resultsDir: string;
   /**
    * Absolute path to the executor binary the runner started for this branch.
    * Scenarios that spin up a second executor (e.g. c1 convergence) use this so
