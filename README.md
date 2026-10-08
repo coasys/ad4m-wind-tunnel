@@ -43,6 +43,7 @@ npm install
 | S8 | Subject Class Queries | Realistic Flux community graph + SPARQL/link query benchmarks |
 | S9 | Neighbourhood Memory Leak | 10k-link neighbourhood perspective + active WS subscription, RSS regression over multi-minute steady-state |
 | S15 | Leak Attribution | Fast 3-phase RSS slope split between idle / writes / writes+queries to pinpoint which path leaks |
+| S16 | SPARQL vs Ad4mModel | Side-by-side raw `querySparql` vs `modelQuery` on identical Flux-shaped data. Drives flux's `docs/sparql-to-ad4m-model-migration.md` per-site convert/keep decisions. `S16_RUNS=N` overrides per-case runs (default 10). |
 
 ##### S9/S15 phase tuning
 
