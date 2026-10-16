@@ -218,6 +218,43 @@ and stays out of scope — A5 asserts the reply lands + reads back.
   deterministic mock cannot make it act. That half rides the real-model lane, where
   the reference `@coasys/openclaw-ad4m` plugin registers ad4m tools natively.
 
+### 🧩 Interpretation Wind Tunnel (I-series)
+
+Six scenarios drive AD4M's generic-LLM-interpretation feature end to end
+against a real, containerised executor — turning a conversation transcript into
+typed subject-class instances, the tree-aware upsert (update-by-id, relations),
+the provenance overlay + human-divergence gate, human accept/reject of staged
+suggestions, and the neighbourhood auto-processor. A deterministic mock LLM
+(`interop/agents/mock-llm/`, extended with a content-keyed interpretation-reply
+mode) makes every result reproduce exactly.
+
+```bash
+cd interop/agents
+./verify-i1-base.sh                 # create + read back + dedup on re-run
+./verify-i2-tree.sh                 # update-by-id, hallucinated-id create, relations
+./verify-i3-provenance.sh           # provenance overlay + human-divergence gate
+./verify-i4-accept-reject.sh        # human accept/reject of staged suggestions
+./verify-i5-autoprocessor.sh        # neighbourhood auto-processor, single executor
+./verify-i6-autoprocessor-2exec.sh  # auto-processor, two executors (partial — see below)
+```
+
+| ID | Scenario |
+|----|----------|
+| **I1** | Base interpretation loop — typed instance created, read back, dedup on re-run |
+| **I2** | Tree-aware — update by known id, hallucinated-id routes to Create, relation to an existing node |
+| **I3** | Provenance overlay + §4 human-divergence gate — a human edit survives a divergent re-run |
+| **I4** | Accept/reject — property- and whole-base-scoped resolution of staged suggestions |
+| **I5** | Neighbourhood auto-processor, single executor — exactly one pass, no double-processing |
+| **I6** | Auto-processor, two executors — each independently verified; the real cross-executor claim race needs a synced neighbourhood this harness cannot stand up blind, so it SKIPs honestly by default |
+
+Each script stands alone (own hardened executor pod on `INTERP_EXEC_IMAGE`,
+default `ad4m-test-interp:latest`; SKIPs honestly when that image stays absent)
+and runs over the executor's raw WS-RPC — `runInterpretation` /
+`addAutoProcessor` / `acceptInterpretation` / `rejectInterpretation` carry no
+MCP tool. See [`interop/agents/INTERPRETATION.md`](interop/agents/INTERPRETATION.md)
+for the mock's interpretation-reply protocol, the model-registration path, and
+every assumption still needing verification against a live run.
+
 ---
 
 ## Configuration

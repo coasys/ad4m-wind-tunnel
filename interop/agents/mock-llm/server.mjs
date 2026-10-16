@@ -20,6 +20,38 @@
  *
  * The script advances one step per chat/messages request; when it runs out it
  * returns a final "done" text. A fresh instance per scenario keeps it deterministic.
+ *
+ * ── Interpretation mode (I-series) ──
+ * The generic-LLM-interpretation feature (`perspective.runInterpretation` /
+ * `addAutoProcessor`) prompts a plain chat completion — no `tools` array — whose
+ * user turn carries the JSON `{"classes":[...],"transcript":[...]}` payload
+ * `build_interpretation_input` assembles (see ad4m-interp's
+ * `rust-executor/src/perspectives/interpretation/prompt.rs`). This mock recognises
+ * that shape (no `tools`, body containing both `"classes"` and `"transcript"`) and
+ * answers from a **content-keyed rule table** instead of the tool-call script, so
+ * interpretation calls never consume/interfere with a scripted A-series step:
+ *
+ *   MOCK_LLM_INTERP_RULES — JSON array of rules, checked in order:
+ *     { "label"?: string, "match": string | string[], "response": any }
+ *   Every `match` substring must appear in the raw request body (an AND over the
+ *   array form); the first matching rule sends its `response` back as the
+ *   assistant's plain-text reply. `response` can hold the JSON value to return
+ *   (auto-stringified into the exact array shape `interpretation/parse.rs`
+ *   expects) OR a raw string sent verbatim — useful for proving the parser's
+ *   noise-stripping (code fences, `<think>` blocks) end to end. When no rule
+ *   matches, the mock returns `"[]"` (a valid, empty extraction — never the
+ *   tool-script's "ok" filler, which fails to parse as interpretation JSON and
+ *   would burn the executor's 5-attempt retry budget on every unmatched call).
+ *
+ * Rules can also load/replace at RUNTIME (a create call's response often needs
+ * to embed a base URI the executor mints only after the first call returns,
+ * which this process cannot know upfront):
+ *   POST /interp-rules  { "rules": [...] }  -> replaces the table, {ok:true,count}
+ *   GET  /interp-rules                      -> current table (debugging)
+ *
+ * This design stays fully additive: the mock recognises an interpretation-shaped
+ * call only when the request carries NO `tools` array, so every existing
+ * A-series scripted-tool-call flow continues to work unchanged.
  */
 import http from "node:http";
 
@@ -45,6 +77,15 @@ try {
 }
 let step = 0;
 
+// ── Interpretation rule table (content-keyed, independent of `script`/`step`) ──
+let interpRules = [];
+try {
+  if (process.env.MOCK_LLM_INTERP_RULES) interpRules = JSON.parse(process.env.MOCK_LLM_INTERP_RULES);
+} catch (e) {
+  console.error("[mock-llm] bad MOCK_LLM_INTERP_RULES:", e.message);
+}
+let interpCalls = 0;
+
 function nextStep() {
   const s = step < script.length ? script[step] : { text: "done" };
   step += 1;
@@ -53,6 +94,58 @@ function nextStep() {
     console.error(`[mock-llm] advance step ${step - 1} -> ${desc}`);
   }
   return s;
+}
+
+/** The text the model actually sees, reconstructed from the parsed request.
+ *
+ * `build_interpretation_input`'s `{"classes":...,"transcript":...}` JSON rides
+ * *inside* a chat message's `content` field, so in the raw HTTP body its inner
+ * quotes are escaped (`\"classes\"`) — a literal `"classes"` never appears at
+ * the top level. Detecting/matching against the raw body therefore misses every
+ * interpretation call. Join the parsed message contents (OpenAI `messages[]`,
+ * plus an Anthropic top-level `system` string) so downstream checks see the
+ * real, unescaped payload; fall back to the raw body for shapes we can't parse. */
+function promptHaystack(payload, body) {
+  const parts = [];
+  if (typeof payload?.system === "string") parts.push(payload.system);
+  if (Array.isArray(payload?.messages)) {
+    for (const m of payload.messages) {
+      if (typeof m?.content === "string") parts.push(m.content);
+      else if (Array.isArray(m?.content)) {
+        for (const c of m.content) if (typeof c?.text === "string") parts.push(c.text);
+      }
+    }
+  }
+  return parts.length ? parts.join("\n") : body;
+}
+
+/** A request counts as interpretation-shaped when it carries no tool-call
+ * surface (a plain completion, not an agent turn) and a message content carries
+ * the `build_interpretation_input` JSON — recognised by its two load-bearing
+ * top-level keys, checked against the unescaped haystack. */
+function looksLikeInterpretation(haystack, hasTools) {
+  return !hasTools && haystack.includes('"classes"') && haystack.includes('"transcript"');
+}
+
+/** First rule whose `match` substring(s) all appear in the prompt haystack;
+ * `undefined` when none match (caller falls back to an empty-array extraction). */
+function matchInterpRule(haystack) {
+  return interpRules.find((r) => {
+    const needles = Array.isArray(r.match) ? r.match : [r.match];
+    return needles.length > 0 && needles.every((n) => haystack.includes(n));
+  });
+}
+
+function interpretationReply(haystack) {
+  interpCalls += 1;
+  const rule = matchInterpRule(haystack);
+  if (rule) {
+    const text = typeof rule.response === "string" ? rule.response : JSON.stringify(rule.response);
+    if (LOG) console.error(`[mock-llm] interpretation call ${interpCalls} -> rule "${rule.label || (Array.isArray(rule.match) ? rule.match.join("+") : rule.match)}"`);
+    return { text };
+  }
+  if (LOG) console.error(`[mock-llm] interpretation call ${interpCalls} -> no rule matched, returning []`);
+  return { text: "[]" };
 }
 
 function readBody(req) {
@@ -235,13 +328,37 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "GET" && (url === "/health" || url === "/")) {
     res.writeHead(200, { "content-type": "application/json" });
-    return res.end(JSON.stringify({ status: "ok", step, scriptLen: script.length }));
+    return res.end(JSON.stringify({ status: "ok", step, scriptLen: script.length, interpCalls, interpRules: interpRules.length }));
   }
   if (req.method === "GET" && url.includes("models")) {
     res.writeHead(200, { "content-type": "application/json" });
     return res.end(
       JSON.stringify({ object: "list", data: [{ id: "mock-model", object: "model", owned_by: "windtunnel" }] }),
     );
+  }
+
+  // ── Interpretation rule control-plane (runtime-settable; a create call's
+  // response needs a base URI the executor only mints after the FIRST call
+  // returns, so drivers push the next rule between `runInterpretation` calls). ──
+  if (url === "/interp-rules") {
+    if (req.method === "POST") {
+      const body = await readBody(req);
+      let parsed;
+      try {
+        parsed = JSON.parse(body || "{}");
+      } catch (e) {
+        res.writeHead(400, { "content-type": "application/json" });
+        return res.end(JSON.stringify({ error: "bad JSON", detail: e.message }));
+      }
+      interpRules = Array.isArray(parsed) ? parsed : parsed.rules || [];
+      if (LOG) console.error(`[mock-llm] interp-rules replaced: ${interpRules.length} rule(s)`);
+      res.writeHead(200, { "content-type": "application/json" });
+      return res.end(JSON.stringify({ ok: true, count: interpRules.length }));
+    }
+    if (req.method === "GET") {
+      res.writeHead(200, { "content-type": "application/json" });
+      return res.end(JSON.stringify({ rules: interpRules, interpCalls }));
+    }
   }
 
   const body = await readBody(req);
@@ -265,7 +382,16 @@ const server = http.createServer(async (req, res) => {
   // probes, tool-less summaries); those get a benign reply and do NOT consume a
   // step — otherwise a title call would eat the turn's scripted tool_call.
   const triggered = !TRIGGER || body.includes(TRIGGER);
-  const s = hasTools && triggered ? nextStep() : { text: structured ? JSON.stringify({ title: "session" }) : "ok" };
+  const haystack = promptHaystack(payload, body);
+  let s;
+  if (looksLikeInterpretation(haystack, hasTools)) {
+    // Generic-LLM-interpretation call (no tools, `{"classes":...,"transcript":...}`
+    // in a message content) — answer from the content-keyed rule table; never
+    // touches `script`/`step`.
+    s = interpretationReply(haystack);
+  } else {
+    s = hasTools && triggered ? nextStep() : { text: structured ? JSON.stringify({ title: "session" }) : "ok" };
+  }
 
   if (url.includes("/chat/completions")) {
     return wantsStream ? openaiStream(res, s) : openaiJson(res, s);
@@ -278,4 +404,8 @@ const server = http.createServer(async (req, res) => {
   res.end(JSON.stringify({ error: "not found", url }));
 });
 
-server.listen(PORT, () => console.error(`[mock-llm] listening on :${PORT} (script steps: ${script.length}, LOG=${LOG})`));
+server.listen(PORT, () =>
+  console.error(
+    `[mock-llm] listening on :${PORT} (script steps: ${script.length}, interp rules: ${interpRules.length}, LOG=${LOG})`,
+  ),
+);
