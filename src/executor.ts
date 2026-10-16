@@ -40,6 +40,31 @@ function snapshotIsValid(p: string): boolean {
   return existsSync(p) && statSync(p).size > 0;
 }
 
+/**
+ * Shared `CARGO_TARGET_DIR` across branches so the second branch in a
+ * multi-branch session reuses the compiled deps from the first. The wind
+ * tunnel nukes the per-branch build dir between runs, so absent this each
+ * branch pays a full cold release build (~8–10 min). With sharing, only
+ * the crates that actually differ between branches recompile (typically
+ * ~2 min). Cargo's fingerprinting handles staleness across toolchain or
+ * dep changes.
+ *
+ * Override via `AD4M_WT_CARGO_TARGET_DIR=/some/path` (set to empty string
+ * to disable and fall back to per-branch `<buildDir>/target`).
+ */
+function cargoTargetDir(): string | null {
+  const override = process.env.AD4M_WT_CARGO_TARGET_DIR;
+  if (override === "") return null;
+  if (override) {
+    mkdirSync(override, { recursive: true });
+    return override;
+  }
+  const base = process.env.XDG_CACHE_HOME || join(homedir(), ".cache");
+  const dir = join(base, "ad4m-wind-tunnel", "cargo-target");
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
 export interface ExecutorConfig {
   branch: string;
   port: number;
@@ -99,6 +124,11 @@ export async function buildExecutor(config: ExecutorConfig): Promise<string> {
     ? join(snapshotCacheDir(), `${denoRev}.bin`)
     : null;
 
+  const sharedTargetDir = cargoTargetDir();
+  const cargoEnv: NodeJS.ProcessEnv = sharedTargetDir
+    ? { ...process.env, CARGO_TARGET_DIR: sharedTargetDir }
+    : process.env;
+
   // Copy schema.gql if needed (must precede `cargo run`, which compiles core/).
   const schemaSrc = join(adamRepoPath, "core", "lib", "src", "schema.gql");
   if (existsSync(schemaSrc)) {
@@ -125,6 +155,7 @@ export async function buildExecutor(config: ExecutorConfig): Promise<string> {
       cwd: join(buildDir, "rust-executor"),
       stdio: "pipe",
       timeout: 1800000,
+      env: cargoEnv,
     });
     copyFileSync(snapshotRustExecutorPath, snapshotRootPath);
     if (cachePath) {
@@ -134,15 +165,35 @@ export async function buildExecutor(config: ExecutorConfig): Promise<string> {
   }
 
   // Build the executor
-  console.log(`[executor] Building ad4m-executor for ${branch}...`);
+  console.log(
+    sharedTargetDir
+      ? `[executor] Building ad4m-executor for ${branch} (shared target ${sharedTargetDir})...`
+      : `[executor] Building ad4m-executor for ${branch}...`
+  );
   execSync("cargo build --release --bin ad4m-executor 2>&1", {
     cwd: buildDir,
     stdio: "pipe",
     timeout: 1800000, // 30 min
+    env: cargoEnv,
   });
 
+  // When the target dir is shared, cargo writes the binary to
+  // `<shared>/release/ad4m-executor`. Multi-branch runs build all branches
+  // before running any scenarios, so a later branch would overwrite the
+  // earlier branch's binary if we returned that path directly. Copy the
+  // freshly-built binary into the per-branch `<buildDir>/target/release/`
+  // path so each branch's scenarios run against the correct bits and
+  // `--skip-build` (which expects the conventional path) keeps working.
   const binaryPath = join(buildDir, "target", "release", "ad4m-executor");
-  if (!existsSync(binaryPath)) {
+  if (sharedTargetDir) {
+    const builtPath = join(sharedTargetDir, "release", "ad4m-executor");
+    if (!existsSync(builtPath)) {
+      throw new Error(`Binary not found at ${builtPath}`);
+    }
+    mkdirSync(join(buildDir, "target", "release"), { recursive: true });
+    copyFileSync(builtPath, binaryPath);
+    execSync(`chmod +x "${binaryPath}"`, { stdio: "pipe" });
+  } else if (!existsSync(binaryPath)) {
     throw new Error(`Binary not found at ${binaryPath}`);
   }
 
