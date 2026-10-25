@@ -21,6 +21,7 @@ import {
   s9NeighbourhoodMemoryLeak,
   s10SubscriptionFanout, s12PersistenceColdQuery, s13ReadWriteMix, s14MultiPerspectiveLoad,
   s15LeakAttribution,
+  w1WeSpaceRpc,
 } from "./scenarios/index.js";
 import { consoleReport, jsonReport, comparisonReport } from "./reporters.js";
 import { config, validateAdamRepo } from "./config.js";
@@ -37,6 +38,7 @@ const ALL_SCENARIOS: Scenario[] = [
   s9NeighbourhoodMemoryLeak,
   s10SubscriptionFanout, s12PersistenceColdQuery, s13ReadWriteMix, s14MultiPerspectiveLoad,
   s15LeakAttribution,
+  w1WeSpaceRpc,
 ];
 
 function parseArgs() {
@@ -89,6 +91,7 @@ async function runScenariosForBranch(
       adamRepoPath: config.adamRepoPath,
       buildDir: join(config.tmpDirBase, `ad4m-build-${dirName}`),
       extraArgs: extraArgs.length > 0 ? extraArgs : undefined,
+      multiUser: scenario.multiUser ?? true,
     };
 
     let proc: any = null;
@@ -142,6 +145,7 @@ async function runScenariosForBranch(
         adamRepoPath: config.adamRepoPath,
         tmpDirBase: config.tmpDirBase,
         executorPath: binaryPath,
+        executorPid: proc?.pid,
       };
 
       try {

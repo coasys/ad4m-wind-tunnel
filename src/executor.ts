@@ -49,6 +49,11 @@ export interface ExecutorConfig {
   buildDir: string;
   /** Extra CLI args appended to the `run` invocation (e.g. ["--language-language-only","true"]). */
   extraArgs?: string[];
+  /**
+   * `--enable-multi-user` value. Defaults to true (every existing scenario ran that way); a
+   * scenario that drives a single-user app (w1: WE web) sets it false.
+   */
+  multiUser?: boolean;
 }
 
 export interface ExecutorInstance {
@@ -182,7 +187,7 @@ export async function startExecutor(
     "--run-dapp-server", "false",
     "--hc-use-bootstrap", "false",
     "--hc-use-proxy", "false",
-    "--enable-multi-user", "true",
+    "--enable-multi-user", String(config.multiUser ?? true),
     ...(config.extraArgs ?? []),
   ], {
     stdio: ["pipe", "pipe", "pipe"],

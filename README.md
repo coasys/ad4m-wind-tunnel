@@ -66,6 +66,74 @@ For absolute leak verification: serial S9 sweep across all 4 modes (~16 min defa
 | M4 | Write Load Under Sync | Dual-executor concurrent write interference measurement |
 | M5 | Concurrent Neighbourhoods | 3 executors × 3 perspectives concurrent load |
 | A1 | MCP Throughput | AI tool call latency via MCP protocol |
+| W1 | WE Space RPC Footprint | The real WE web app (Chromium, headless) opening, idling on and clicking through a populated WE space; every executor WebSocket frame recorded via CDP |
+
+##### W1 — WE space RPC footprint
+
+Drives the complete WE web app against a fresh executor and records every WebSocket frame on the
+executor socket from Chromium's own network layer (CDP `Network.webSocket*`): method, JSON-RPC id,
+params/response size, latency (request↔response paired by id), pushed events by type, sockets
+opened, reconnects, HTTP to the executor, executor RSS/CPU (`/proc`) and browser heap/script time.
+
+```bash
+# Prerequisites (once per checkout):
+#   ad4m:  pnpm install; (cd core && pnpm run build); (cd connect && pnpm run build); executor built
+#   WE:    unset NODE_ENV; pnpm install && pnpm build:web
+#   here:  npm install            (playwright-core; uses Playwright's cached Chromium, or W1_CHROME)
+AD4M_REPO=/path/to/ad4m WE_REPO=/path/to/we \
+  ./run.sh --skip-build --executor-path /path/to/ad4m/target/release/ad4m-executor \
+  --scenario w1 --branch w1-run1
+```
+
+Flow: mint a WE capability JWT (`agent.requestCapability` → `permitCapability` → `generateJwt`, with
+WE's own app info) and put it where ad4m-connect keeps it (`<connect version>/ad4m-token`,
+`/ad4m-url`, `/ad4m-port` in localStorage) → build WE web in production mode with a generated
+wrapper Vite config (SDK aliased to the executor's ad4m checkout; the WE tree is not modified) and
+serve it with `vite preview` → **seed (not measured)**: create the space through WE's UI (name
+prompt, rail "+", Create a space, Shared), then write channels, messages, replies, likes, tasks and
+events through WE's own packages (`@we/block-shared` `createBlocks`, the entity classes registered
+by `@we/backend-ad4m`). The first `W1_DISTINCT_BODIES` messages go through `createBlocks`; the rest
+are batched copies of those (same model calls, the `we://editor_state` link pointing at an uploaded
+file), checked link-for-link against their exemplar, then containment, reply and like counts are
+verified. The defaults (300 messages, 120 replies) seed in about 2 minutes → **measure** in a new browser context with the same
+localStorage/IndexedDB (a returning user, cold HTTP cache):
+
+- **A — cold open:** `goto /space/<uuid>` → ready signal (DOM: the first seeded task card on
+  Workshop's canvas, or the last channel in the Discord rail) → `W1_SETTLE_MS`. Reported both "to
+  ready" and whole.
+- **B — idle:** `W1_IDLE_MS` with no input; per-second call counts.
+- **C — interaction:** each step its own sub-phase — Workshop: Kanban, scroll, Calendar, Flows,
+  Canvas, scroll; Discord: every channel, scroll up, back to #general, scroll.
+
+Output in `results/<branch>/`: `w1-we-space-rpc.json` (runner result: per-phase aggregates),
+`w1-we-space-rpc.raw.json` (every call and frame) and `w1-we-space-rpc.md` (per phase: methods by
+count with total/avg/p95 latency and bytes, the top repeated identical calls — same method + same
+params hash — events by type, totals). Repeat with a different `--branch` label per run.
+
+| Env | Default | Meaning |
+|---|---|---|
+| `WE_REPO` / `--we-repo` | *(required; skips without)* | WE monorepo checkout (built) |
+| `W1_SDK` | `executor` | `executor`: alias `@coasys/ad4m`/`-connect` to the ad4m checkout (`W1_AD4M_SDK_REPO`, else `AD4M_REPO`, else the checkout the executor binary sits in); `pinned`: WE's own pin |
+| `W1_WE_MODE` | `preview` | `preview` = production build + `vite preview`; `dev` = Vite dev server |
+| `W1_WE_PORT` | base port + 50 | Port WE is served on (dev also uses +1 for HMR) |
+| `W1_ACCESS` | `shared` | `shared` (neighbourhood) or `personal` space |
+| `W1_TEMPLATE` | *(starter's: workshop)* | Override `Space.defaultTemplateId`, e.g. `discord` for the channel/message view |
+| `W1_CHANNELS` / `W1_MESSAGES` | `4` / `75` | Channels, and messages per channel |
+| `W1_REPLY_EVERY` / `W1_REPLIES` | `5` / `2` | Every Nth message gets this many replies |
+| `W1_SIGNAL_EVERY` | `3` | Every Nth message gets a Like |
+| `W1_TASKS` / `W1_EVENTS` | `24` / `8` | Tasks and events in the space collection |
+| `W1_DISTINCT_BODIES` | `24` | Messages written through `createBlocks` with their own editor-state upload; every other message/reply reuses one of those bodies (same model calls, batched, no upload). `0` = all through `createBlocks` (~1.4 s each, ~10 min for the defaults) |
+| `W1_SEED_BATCH` | `25` | Pooled messages per write batch |
+| `W1_SEED_CONCURRENCY` | `6` | Real messages (or pooled batches) in flight; real uploads serialise in the file-storage language, and far more than 6 pass the SDK's 30 s call timeout |
+| `W1_IDLE_MS` / `W1_SETTLE_MS` / `W1_STEP_MS` | `60000` / `5000` / `5000` | Phase B length, A settle after ready, wait after each C step |
+| `W1_READY_TEXT` / `W1_STEPS` | *(per template)* | Comma lists overriding the ready signal / the steps (`@scroll` = wheel) |
+| `W1_WARM` | `1` | `0` = measure a first-ever open (token only, no stored app state) |
+| `W1_CHROME` | *(Playwright's Chromium)* | Browser executable |
+| `W1_WE_REBUILD` | `0` | `1` = rebuild WE even if a build for the same commits exists |
+
+Shared spaces need a WE that reads `runtime.linkLanguageTemplates` as `LanguageMeta[]` (coasys/we#349)
+when the executor includes coasys/ad4m#1466; older WE fails `createSpace` with
+`Invalid params for language.applyTemplate`.
 
 #### Results
 
@@ -81,6 +149,7 @@ src/
 ├── scenario.ts       # Scenario interface
 ├── reporters.ts      # Console + JSON reporters
 ├── report.ts         # Comparison report generator
+├── w1/               # W1 helpers: WE build/serve, auth, seeding, CDP WS recorder, analysis
 └── scenarios/        # All scenario implementations
 ```
 
@@ -231,6 +300,7 @@ All machine-specific values are configurable. CLI args take precedence over envi
 | `AD4M_WT_TMPDIR` | `--tmp-dir` | OS temp dir | Base directory for temporary data and build dirs |
 | `AD4M_WT_BASE_PORT` | `--base-port` | `12100` | Starting port for executor instances |
 | `AD4M_WT_RESULTS_DIR` | `--results-dir` | `./results` | Where to write JSON result files |
+| `WE_REPO` | `--we-repo` | *(none)* | WE monorepo checkout, for W1 |
 
 ### Pre-built executor
 

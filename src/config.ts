@@ -19,6 +19,8 @@ export interface WindTunnelConfig {
   basePort: number;
   /** Directory for storing results */
   resultsDir: string;
+  /** Path to a WE monorepo checkout (w1 drives its web app) */
+  weRepoPath: string;
 }
 
 /**
@@ -46,6 +48,9 @@ function parseConfigArgs(): Partial<WindTunnelConfig> {
         break;
       case "--results-dir":
         result.resultsDir = args[++i];
+        break;
+      case "--we-repo":
+        result.weRepoPath = args[++i];
         break;
     }
   }
@@ -80,6 +85,10 @@ function resolveConfig(): WindTunnelConfig {
       cliArgs.resultsDir
       ?? process.env.AD4M_WT_RESULTS_DIR
       ?? join(process.cwd(), "results"),
+    weRepoPath:
+      cliArgs.weRepoPath
+      ?? process.env.WE_REPO
+      ?? "",
   };
 }
 

@@ -54,6 +54,8 @@ src/
 ├── scenario.ts         # Scenario + ScenarioContext + ScenarioResult interfaces
 ├── convergence/
 │   └── languages.ts     # Registry of convergence languages (bundle path, backend, template params)
+├── w1/                  # W1 helpers: we-app (build/serve WE), auth (JWT + connect storage),
+│                        #   seed (UI space + WE-package content), ws-recorder (CDP), analyze, proc-stats
 └── scenarios/
     ├── index.ts         # Scenario registry — every scenario must be registered here
     ├── c1-convergence.ts# Multi-agent convergence (see below)
@@ -131,6 +133,60 @@ does not cross-node on Kubo 0.42.0). The four transport defects this run surface
 (merge-not-inlined, Node keepAliveTimeout race, Deno `allow_env:none`, bounded
 `dag/get`) live in the [ipfs-link-language](https://github.com/coasys/ipfs-link-language)
 `AGENTS.md` and CAPABILITIES.md.
+
+## W1 — WE space RPC footprint
+
+`src/scenarios/w1-we-space-rpc.ts` drives the real WE web app (headless Chromium via
+`playwright-core`) against the runner's executor and records every executor WebSocket frame from
+CDP. It is the only scenario that measures a client app rather than the executor API directly.
+README → "W1" has the flow, env knobs and output files. Run:
+
+```bash
+AD4M_REPO=<ad4m checkout> WE_REPO=<we checkout> ./run.sh --skip-build \
+  --executor-path <ad4m checkout>/target/release/ad4m-executor --scenario w1 --branch w1-run1
+```
+
+Load-bearing details:
+
+- **Executor runs with `--enable-multi-user false`** (`Scenario.multiUser = false`; the runner passes
+  it to `startExecutor`). Every other scenario still gets `true`.
+- **Auth shortcut.** ad4m-connect keeps its session in localStorage under its *package version*
+  prefix: `<version>/ad4m-token`, `<version>/ad4m-url`, `<version>/ad4m-port` (ad4m
+  `connect/src/utils.ts` `setLocal`; read in `connect/src/core.ts` constructor). The version is read
+  from whichever connect package the build used. The token is a real JWT minted with WE's app info
+  (`src/w1/auth.ts`), not the admin credential.
+- **SDK.** WE pins `@coasys/ad4m` by commit (root `package.json` overrides). `W1_SDK=executor`
+  (default) aliases the SDK to the executor's ad4m checkout through a generated wrapper Vite config
+  in `<tmp>/ad4m-wt-w1-we/` that imports WE's own `apps/we-web/vite.config.ts`; nothing in the WE tree
+  changes. The ad4m checkout needs `core/lib` and `connect/dist` built.
+- **WE needs `pnpm build:web` first, with `NODE_ENV` unset** (the shell's `NODE_ENV=production`
+  breaks WE builds and also makes `npm install` here skip devDependencies).
+- **Shared spaces** need WE with coasys/we#349 against an executor with coasys/ad4m#1466
+  (`runtime.linkLanguageTemplates` returns `LanguageMeta[]`); older WE fails `createSpace` with
+  `Invalid params for language.applyTemplate: invalid type: map, expected a string`.
+- **Real message writes are slow; most messages are pooled.** `createBlocks` uploads each message's
+  editor state with `expression.create` on the holochain file-storage language (two zome calls,
+  serialised per language: ~1.4 s a message, ~10 min for 420). At 16 in flight they also pass the
+  SDK's 30 s call timeout. So only `W1_DISTINCT_BODIES` (24) messages go through `createBlocks`; the
+  rest copy one of those bodies through the same model calls in batches of `W1_SEED_BATCH`, with the
+  `we://editor_state` link pointing at an already-uploaded file (`setProperty` always re-uploads, so
+  the link is written directly). The first copy of each kind is compared predicate-for-predicate
+  with its exemplar; channel containment and `we://response`/`we://thread`/`we://signal` counts are
+  verified at the end. Default sizes seed in ~2 min. Copies share bodies, so text repeats every 24.
+- **Reading message rows is slow on the executor, by design of the current code.**
+  `model_query/query.rs` `resolve_language_transforms` fetches every expression-resolved property of
+  every row (a file-storage read for `editorState`, ~350 ms) whatever `properties` the query
+  selects. W1 surfaces it as WE's container-activity query timing out (30 s) on open.
+- **Discord template + AD4M ids:** a channel route is `/channel/<id>` and AD4M ids are
+  `ad4m://obj/…`, which `RouteStore.templateSegments` splits on `/`; the channel view shows "No such
+  channel". W1's Discord steps still run (rail clicks, read markers) but no message list renders.
+- **The neighbourhood URL arrives after the create modal closes**; the scenario polls
+  `perspective.all` for `sharedUrl`.
+- **`page.evaluate` with a function breaks under tsx** (`__name is not defined`: esbuild's keepNames
+  helper is not in the page). Pass a string expression, or keep functions free of named inner
+  functions/consts.
+- The create-space Personal/Shared switch's labels intercept the pointer; click the
+  `role=switch` with `force` and retry until "Shareable space" shows.
 
 ## Known gotchas (load-bearing — read before debugging convergence)
 

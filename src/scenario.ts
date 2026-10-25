@@ -33,6 +33,8 @@ export interface ScenarioContext {
    * they work under `--executor-path`, where the binary is not in the build dir.
    */
   executorPath?: string;
+  /** PID of the executor the runner started, for scenarios that sample its /proc stats. */
+  executorPid?: number;
 }
 
 export interface Scenario {
@@ -46,5 +48,10 @@ export interface Scenario {
    * Used by the agent-harness (A-series) pod scenarios.
    */
   managesOwnEnvironment?: boolean;
+  /**
+   * `--enable-multi-user` for the executor the runner boots. Defaults to true. A scenario that
+   * drives a single-user client app (w1) sets it false so the app sees the node as its own.
+   */
+  multiUser?: boolean;
   run(ctx: ScenarioContext): Promise<ScenarioResult>;
 }
