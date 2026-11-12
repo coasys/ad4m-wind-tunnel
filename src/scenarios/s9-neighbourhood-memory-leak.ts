@@ -140,7 +140,20 @@ async function openPassiveSubscriber(port: number, adminToken: string): Promise<
   const sub: PassiveSubscriber = { ws, linkAddedCount: 0, close: () => { try { ws.close(); } catch {} } };
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("Passive subscriber connect timeout")), 10_000);
-    ws.on("open", () => { clearTimeout(timer); resolve(); });
+    ws.on("open", () => {
+      // Events ride the RPC socket; a socket gets none until it calls `events.watch`.
+      ws.send(JSON.stringify({ id: "watch", type: "events.watch", params: { "link-added": null } }));
+    });
+    ws.on("message", (data) => {
+      try {
+        const msg = JSON.parse(data.toString());
+        if (msg.id === "watch") {
+          clearTimeout(timer);
+          if (msg.error) reject(new Error(`events.watch: ${JSON.stringify(msg.error)}`));
+          else resolve();
+        }
+      } catch {}
+    });
     ws.on("error", (err) => { clearTimeout(timer); reject(err); });
   });
   ws.on("message", (data) => {

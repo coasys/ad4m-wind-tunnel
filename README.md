@@ -43,6 +43,60 @@ npm install
 | S8 | Subject Class Queries | Realistic Flux community graph + SPARQL/link query benchmarks |
 | S9 | Neighbourhood Memory Leak | 10k-link neighbourhood perspective + active WS subscription, RSS regression over multi-minute steady-state |
 | S15 | Leak Attribution | Fast 3-phase RSS slope split between idle / writes / writes+queries to pinpoint which path leaks |
+| S16 | Idle CPU | Per-thread CPU of an idle executor over a fixed window (`S16_SETTLE_SEC`, `S16_IDLE_SEC`, `S16_SAMPLE_SEC`, `S16_THRESHOLD_PCT`) |
+| M1 | Neighbourhood Sync | Dual-executor neighbourhood create/join/sync |
+| M2 | Multi-Executor Scale | 3 executors, cross-interference measurement |
+| M3 | Link Language Comparison | Docker infra startup + local baseline comparison |
+| M4 | Write Load Under Sync | Dual-executor concurrent write interference measurement |
+| M5 | Concurrent Neighbourhoods | 3 executors × 3 perspectives concurrent load |
+| C1 | Convergence | Two executors, one link language over its live backend, link-set convergence |
+| A1 | MCP Throughput | AI tool call latency via MCP protocol |
+
+The platform baseline family (P1–P5) is not in the default run. Select it by id or with `--scenario platform`:
+
+| ID | Name | What it measures |
+|----|------|------------------|
+| `p1` | Platform Idle Baseline | One executor, no spaces: RSS, RssAnon/RssFile, VmSwap, threads grouped by pool, CPU % of one core over a fixed idle window (split by thread pool), child processes |
+| `p2-perspectives` | Space Cost Perspectives | Marginal RSS, threads and idle CPU per plain perspective at N = 1, 5, 20, 50 (cumulative) |
+| `p2-neighbourhoods` | Space Cost Neighbourhoods | Same, per neighbourhood on the server link language (each one with its own templated language). Skips when the link-server is down |
+| `p3` | Cold Open | Restart with one 5,000- and one 50,000-link space: boot time, unlock, time to first query answer, RSS after boot; then 30 spaces: first restart after the writes (replays the RocksDB WAL), then one restart each with the spaces queried in sequence and all at once |
+| `p4` | Space Removal | What `perspective.remove` and `language.remove` give back (RSS, threads, CPU, store directory on disk). The executor has no close call |
+| `p5` | Storage Attribution | RocksDB store size per perspective (and how much of it is still WAL), bytes per link, data dir breakdown, RSS step per store and for a query load, smaps_rollup |
+
+##### Platform baseline
+
+Every P-scenario starts and stops its own executor (port `--base-port`), records the ad4m commit, machine (CPU count, RAM), Holochain flag, load average and host swap at start and end, plus load average and host CPU busy % around every idle window. Each writes `<scenario>.json` (raw samples + summary) and `<scenario>.md`.
+
+```bash
+# 1. Link-server for the neighbourhood scenarios (build from the ad4m checkout under test):
+AD4M_REPO=/path/to/ad4m docker compose -f infra/docker-compose.link-server.yml up -d --build
+curl http://127.0.0.1:3456/health
+
+# 2. Server link language bundle in that checkout (needs `pnpm install` with dev deps, then):
+( cd /path/to/ad4m/ad4m-ldk/js && pnpm run build )
+( cd /path/to/ad4m/bootstrap-languages/server-link-language && deno run --allow-all esbuild.ts )
+
+# 3. Everything, Holochain off and on, 3 runs each, then SUMMARY.md with the spread:
+EXECUTOR=/path/to/ad4m-executor LABEL=dev-<sha> AD4M_REPO=/path/to/ad4m \
+  RESULTS=results/platform-baseline-$(date +%F) scripts/platform-baseline.sh
+
+# One scenario:
+npx tsx src/main.ts --scenario p2-neighbourhoods --skip-build --executor-path /path/to/ad4m-executor \
+  --branch dev-<sha>-hc-off --run-holochain false --repeat 3 --results-dir results/platform-baseline-<date>
+npx tsx src/platform/summarize.ts results/platform-baseline-<date>   # spread across runs
+```
+
+Tunables (env, defaults shown):
+
+```bash
+P1_WARMUP_SEC=60  P1_IDLE_SEC=300  P1_SAMPLE_SEC=5
+P2_COUNTS=1,5,20,50  P2_LINKS_PER_SPACE=10  P2_WARMUP_SEC=60  P2_SETTLE_SEC=30  P2_IDLE_SEC=120  P2_SAMPLE_SEC=5
+P3_LINK_COUNTS=5000,50000  P3_SPACES=30  P3_SPACE_LINKS=1000  P3_SETTLE_SEC=30
+P4_COUNT=20  P4_LINKS=1000  P4_WARMUP_SEC=60  P4_SETTLE_SEC=30  P4_IDLE_SEC=60  P4_SAMPLE_SEC=5
+P5_LINK_COUNTS=0,100,1000,10000  P5_NH_LINKS=100  P5_SETTLE_SEC=15  P5_QUERY_ROUNDS=20
+```
+
+Run the long sweep under a memory cap, e.g. `systemd-run --user --unit=wt-platform --collect -p MemoryMax=16G -p MemorySwapMax=0 bash -c 'exec > run.log 2>&1; …'`.
 
 ##### S9/S15 phase tuning
 
@@ -60,16 +114,14 @@ S15_SEED=2000   S15_PHASE_SEC=60   S15_RSS_INTERVAL_SEC=2       # defaults
 ```
 
 For absolute leak verification: serial S9 sweep across all 4 modes (~16 min default, ~30 min high-fidelity). For inner-loop dev iteration: S15 (~3.5 min, attributes the leak to write vs query path automatically).
-| M1 | Neighbourhood Sync | Dual-executor neighbourhood create/join/sync |
-| M2 | Multi-Executor Scale | 3 executors, cross-interference measurement |
-| M3 | Link Language Comparison | Docker infra startup + local baseline comparison |
-| M4 | Write Load Under Sync | Dual-executor concurrent write interference measurement |
-| M5 | Concurrent Neighbourhoods | 3 executors × 3 perspectives concurrent load |
-| A1 | MCP Throughput | AI tool call latency via MCP protocol |
 
 #### Results
 
-Results are written to `results/<branch-name>/` (branch slashes replaced with dashes). Run `npx tsx src/report.ts` to regenerate `results/comparison.md`.
+Results are written to `results/<branch-name>/` (branch slashes replaced with dashes) as `<scenario>.json` plus `<scenario>.md`. With `--repeat N` each run is `<scenario>-run<i>.json`. Every result carries an `environment` block: ad4m commit and version (`runtime.info`), executor binary, Holochain flag, CPU count/model, RAM, kernel, load average and host swap at start and end. Run `npx tsx src/report.ts` to regenerate `results/comparison.md`.
+
+#### Tests
+
+`npm test` runs the harness unit tests (`src/**/*.test.ts`, node:test through tsx; no executor needed). `npx tsc --noEmit` type-checks.
 
 #### Architecture
 
@@ -81,6 +133,9 @@ src/
 ├── scenario.ts       # Scenario interface
 ├── reporters.ts      # Console + JSON reporters
 ├── report.ts         # Comparison report generator
+├── run-environment.ts# Commit, machine, Holochain flag, load average recorded per result
+├── proc-metrics.ts   # /proc readers: RSS, swap, threads by pool, CPU ticks, children, smaps
+├── platform/         # Platform baseline helpers (idle windows, spaces, stats) + summarize.ts
 └── scenarios/        # All scenario implementations
 ```
 
@@ -231,6 +286,11 @@ All machine-specific values are configurable. CLI args take precedence over envi
 | `AD4M_WT_TMPDIR` | `--tmp-dir` | OS temp dir | Base directory for temporary data and build dirs |
 | `AD4M_WT_BASE_PORT` | `--base-port` | `12100` | Starting port for executor instances |
 | `AD4M_WT_RESULTS_DIR` | `--results-dir` | `./results` | Where to write JSON result files |
+| `AD4M_WT_RUN_HOLOCHAIN` | `--run-holochain <bool>` | `true` | Passed to the executor as `--run-holochain`. Always passed explicitly, so an inherited `AD4M_RUN_HOLOCHAIN` cannot change a run |
+| `AD4M_WT_REPEAT` | `--repeat <n>` | `1` | Run each selected scenario n times on a fresh executor |
+| `LINK_SERVER_URL` | `--link-server-url <url>` | `http://127.0.0.1:3456` | Link-server for the server link language (C1 link-server entry, P2/P4/P5) |
+| `SERVER_LINK_LANGUAGE_BUNDLE` | — | `$AD4M_REPO/bootstrap-languages/server-link-language/build/bundle.js` | Built server link language bundle |
+| `AD4M_WT_EXECUTOR_LOG_DIR` | — | *(unset: discarded)* | Write every executor's stdout/stderr to `executor-<port>-<ts>.log` here |
 
 ### Pre-built executor
 

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
+    "test": "tsx --test 'src/**/*.test.ts'",
     "start": "tsx src/main.ts",
     "scenario:s1": "tsx src/main.ts --scenario s1",
     "scenario:s2": "tsx src/main.ts --scenario s2",

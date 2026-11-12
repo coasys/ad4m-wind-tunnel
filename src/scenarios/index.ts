@@ -20,3 +20,10 @@ export { s12PersistenceColdQuery } from "./s12-persistence-cold-query.js";
 export { s13ReadWriteMix } from "./s13-read-write-mix.js";
 export { s14MultiPerspectiveLoad } from "./s14-multi-perspective-load.js";
 export { s15LeakAttribution } from "./s15-leak-attribution.js";
+
+export { s16IdleCpu } from "./s16-idle-cpu.js";
+export { p1IdleBaseline } from "./p1-idle-baseline.js";
+export { p2SpaceCostPerspectives, p2SpaceCostNeighbourhoods } from "./p2-space-cost.js";
+export { p3ColdOpen } from "./p3-cold-open.js";
+export { p4SpaceRemoval } from "./p4-space-removal.js";
+export { p5StorageAttribution } from "./p5-storage-attribution.js";

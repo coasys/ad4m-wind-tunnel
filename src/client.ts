@@ -163,14 +163,29 @@ export class InstrumentedClient {
 
   async queryLinks(
     perspectiveUuid: string,
-    params?: { source?: string; predicate?: string; target?: string }
+    params?: { source?: string; predicate?: string; target?: string; limit?: number }
   ): Promise<TimedResult<any>> {
+    // The executor takes the filter fields flat next to `uuid`
+    // (`PerspectiveQueryLinksParams`). A nested `query: {...}` object is
+    // ignored by serde, so the filter silently drops and every link returns.
     return this.timed(() =>
       this.wsCall("perspective.queryLinks", {
         uuid: perspectiveUuid,
-        query: params || {},
+        ...(params || {}),
       })
     );
+  }
+
+  /** Bulk add (`perspective.addLinks`). */
+  async addLinks(
+    perspectiveUuid: string,
+    links: Array<{ source: string; predicate?: string; target: string }>
+  ): Promise<TimedResult<any>> {
+    return this.timed(() => this.wsCall("perspective.addLinks", { uuid: perspectiveUuid, links }));
+  }
+
+  async removePerspective(perspectiveUuid: string): Promise<TimedResult<any>> {
+    return this.timed(() => this.wsCall("perspective.remove", { uuid: perspectiveUuid }));
   }
 
   async runProlog(perspectiveUuid: string, query: string): Promise<TimedResult<any>> {

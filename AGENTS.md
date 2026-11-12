@@ -42,7 +42,37 @@ npm install
 Key flags/env (CLI wins over env): `--admin-token` / `AD4M_ADMIN_TOKEN`
 (default `test123`), `--base-port` / `AD4M_WT_BASE_PORT` (default `12100`),
 `--tmp-dir` / `AD4M_WT_TMPDIR`, `--ad4m-repo` / `AD4M_REPO` (needed only when
-building). See README for the full table.
+building), `--run-holochain <bool>` / `AD4M_WT_RUN_HOLOCHAIN` (default true,
+always passed to the executor explicitly), `--repeat <n>` / `AD4M_WT_REPEAT`,
+`--link-server-url` / `LINK_SERVER_URL`. `AD4M_WT_EXECUTOR_LOG_DIR` keeps
+executor stdout/stderr. See README for the full table.
+
+`npm test` runs the harness unit tests (`src/**/*.test.ts`); `npx tsc --noEmit`
+must stay at zero errors.
+
+## Platform baseline (P1–P5)
+
+What one hosted executor costs: idle (`p1`), per space (`p2-perspectives`,
+`p2-neighbourhoods`), cold open (`p3`), after removal (`p4`), storage
+attribution (`p5`). Not in the default run; select by id or
+`--scenario platform`. Full sweep with spread: `scripts/platform-baseline.sh`
+(`EXECUTOR`, `LABEL`, `RESULTS`, `REPEAT`, `REPEAT_HC_ON`, `STEPS`), then
+`npx tsx src/platform/summarize.ts <results-dir>` writes `SUMMARY.md`. The
+summariser reads `<results-dir>/<label>/p*.json` and ignores the `logs` and
+`smoke` subdirectories.
+
+- Every P-scenario sets `managesOwnEnvironment` and starts/stops its own
+  executor through `src/platform/common.ts` (`launchExecutor`, `stopOwned`)
+  so it can restart on the same data dir (`skipInit`). Restarted executors
+  need `agent.unlock` (`ensureAgent`).
+- CPU is the `/proc` tick delta of the executor **and its descendants** over
+  the whole idle window, as % of one core; per-pool CPU uses thread names
+  (`threadPool`: trailing digits stripped, `lang-<hash>` → `lang-*`).
+- Neighbourhood scenarios skip honestly (`skipped: true`) when
+  `LINK_SERVER_URL/health` does not answer or the bundle is missing.
+- Run under a memory cap: `systemd-run --user --scope -p MemoryMax=16G -p MemorySwapMax=0 …`
+  (or `--unit=<name> --collect` for long sweeps). Each `npx tsx` step
+  recompiles `src/`, so do not edit scenario code while a sweep is running.
 
 ## Architecture
 
@@ -52,6 +82,12 @@ src/
 ├── client.ts           # InstrumentedClient — WS-RPC wrapper with timing
 ├── executor.ts         # Executor lifecycle: build / start / waitForHealth / stop
 ├── scenario.ts         # Scenario + ScenarioContext + ScenarioResult interfaces
+├── run-environment.ts  # Commit, machine, Holochain flag, load/swap recorded on every result
+├── proc-metrics.ts     # /proc readers: status, threads by pool, CPU ticks, children, smaps, dir sizes
+├── platform/
+│   ├── common.ts        # Idle windows, owned executors, space creation, markdown helpers
+│   ├── summarize.ts     # Spread across --repeat runs → SUMMARY.md / SUMMARY.json
+│   └── platform.test.ts # Harness unit tests (npm test)
 ├── convergence/
 │   └── languages.ts     # Registry of convergence languages (bundle path, backend, template params)
 └── scenarios/
@@ -173,6 +209,64 @@ When C1 reports "DID NOT CONVERGE", walk these three in order before suspecting
 the harness: (a) are events in the relay DB? (b) does the REQ filter use a
 single-letter key? (c) does the language emit inbound folds, not just return
 them?
+
+## RPC and flag drift (ad4m dev, late 2026)
+
+The executor RPC moved under the harness several times. Each of these
+silently produced wrong numbers, not errors:
+
+1. **`perspective.queryLinks` takes flat params**: `{uuid, source?, predicate?,
+   target?, fromDate?, untilDate?, limit?}`. A nested `query: {...}` is ignored
+   by serde, so the filter drops and **every link** comes back.
+   `InstrumentedClient.queryLinks(uuid, {source, ...})` sends the flat shape.
+2. **`/api/v1/ws/events` is gone.** Events come over the RPC socket only after
+   `events.watch {"link-added": null | [uuid]}`; frames are
+   `{type: "link-added", perspectiveUuid, link}`. There is no
+   `perspective.subscribe_links`. S9 and S10 use `events.watch`.
+3. **The server link language template params are `SERVER_URL` and `UID`**
+   (was `ROOM_ID`). A wrong name templates nothing and every agent lands in the
+   same room.
+4. **Bundle and link-server paths follow `AD4M_REPO`.** The default
+   `../ad4m` may have another branch checked out; point `AD4M_REPO` (and the
+   link-server compose build) at the checkout under test.
+5. **`stopExecutor` used to never SIGKILL**: it tested `proc.killed`, which is
+   true as soon as SIGTERM is *sent*. `stopExecutorAndWait` waits for the exit
+   event and escalates. Always `await` it; executors also run with
+   `--exit-with-parent true`.
+6. **`waitForHealth` polls every 500 ms by default.** Boot times measured
+   with it are quantised to 500 ms; pass `pollMs` (P-scenarios use 25 ms).
+7. **`NODE_ENV=production` in the shell makes `pnpm install` skip
+   devDependencies**, so the server link language bundle fails to build
+   (`@noble/*` missing). Use `NODE_ENV=development pnpm install --prod=false`.
+   The same applies to this repo: `npm ci` omits `tsx` and `typescript`
+   (`npx tsc` then fails). Use `NODE_ENV=development npm ci --include=dev`.
+8. **`language.applyTemplate` uploads to a remote store.** The
+   language-language publishes each templated bundle to a public
+   Cloudflare-worker store over the internet. Neighbourhood creation time
+   includes that round trip, and its transient 5xx errors fail the call;
+   `createNeighbourhoodSpace` retries up to 4 times and records the count.
+9. **Other executors may share the machine.** Never kill by name; find the
+   PID on your port (`lsof -ti:<port>`). The harness only stops processes it
+   spawned.
+10. **`/health` answers before stored perspectives are open.** After a
+    restart, `initialize_from_db` (rust-executor/src/perspectives/mod.rs)
+    opens each stored perspective in its own background task. A query that
+    arrives first gets `Perspective <uuid> not found` for a perspective that
+    exists. With 5,000 links this happened on every run. Use `untilFound`
+    (src/platform/common.ts): it retries every 25 ms and counts the 404s. P3
+    includes that wait in its time to first answer.
+12. **The executor does not flush RocksDB memtables on shutdown.** Writes
+    stay in each store's write-ahead log (`perspectives/<uuid>/**/<n>.log`)
+    until the next open replays and flushes them. 30 spaces of 1,000 links
+    leave ~84 MB of WAL. The first open after writes settles at ~680 MB RSS
+    (Holochain off); the next open of the same stores settles at ~345 MB,
+    whatever the query pattern. So: (a) compare restarts only on the same
+    on-disk state (P3 part B takes one restart for the replay first);
+    (b) a store size read right after writing is mostly WAL
+    (`perspectiveStoreSizes` returns `walBytes` next to `bytes`).
+11. **`src/mcp-client.ts` has 3 `tsc` errors (`'json' is of type 'unknown'`)**
+    at HEAD. These errors existed before the platform-baseline changes. `tsx`
+    does not check types, so the runner still works.
 
 ## Conventions
 

@@ -19,6 +19,23 @@ export interface WindTunnelConfig {
   basePort: number;
   /** Directory for storing results */
   resultsDir: string;
+  /**
+   * Start executors with the embedded Holochain conductor (`--run-holochain`).
+   * Hosted deployments run with it off (`AD4M_RUN_HOLOCHAIN=false`).
+   */
+  runHolochain: boolean;
+  /** Run each selected scenario this many times, each on a fresh executor. */
+  repeat: number;
+  /** Base URL of the link-server the server link language syncs through. */
+  linkServerUrl: string;
+}
+
+export function parseBool(v: string | undefined): boolean | undefined {
+  if (v === undefined) return undefined;
+  const s = v.trim().toLowerCase();
+  if (["1", "true", "on", "yes"].includes(s)) return true;
+  if (["0", "false", "off", "no"].includes(s)) return false;
+  throw new Error(`Not a boolean: "${v}" (use true/false)`);
 }
 
 /**
@@ -26,8 +43,7 @@ export interface WindTunnelConfig {
  * Returns only the config-related args; other args (--scenario, --branch, etc.)
  * are handled by the main runner's parseArgs().
  */
-function parseConfigArgs(): Partial<WindTunnelConfig> {
-  const args = process.argv.slice(2);
+export function parseConfigArgs(args: string[] = process.argv.slice(2)): Partial<WindTunnelConfig> {
   const result: Partial<WindTunnelConfig> = {};
 
   for (let i = 0; i < args.length; i++) {
@@ -47,6 +63,15 @@ function parseConfigArgs(): Partial<WindTunnelConfig> {
       case "--results-dir":
         result.resultsDir = args[++i];
         break;
+      case "--run-holochain":
+        result.runHolochain = parseBool(args[++i]);
+        break;
+      case "--repeat":
+        result.repeat = parseInt(args[++i], 10);
+        break;
+      case "--link-server-url":
+        result.linkServerUrl = args[++i];
+        break;
     }
   }
 
@@ -56,30 +81,47 @@ function parseConfigArgs(): Partial<WindTunnelConfig> {
 /**
  * Build the resolved config by merging defaults < env vars < CLI args.
  */
-function resolveConfig(): WindTunnelConfig {
-  const cliArgs = parseConfigArgs();
+export function resolveConfig(
+  args: string[] = process.argv.slice(2),
+  env: NodeJS.ProcessEnv = process.env,
+): WindTunnelConfig {
+  const cliArgs = parseConfigArgs(args);
   const systemTmp = tmpdir();
 
   return {
     adamRepoPath:
       cliArgs.adamRepoPath
-      ?? process.env.AD4M_REPO
+      ?? env.AD4M_REPO
       ?? "",
     adminToken:
       cliArgs.adminToken
-      ?? process.env.AD4M_ADMIN_TOKEN
+      ?? env.AD4M_ADMIN_TOKEN
       ?? "test123",
     tmpDirBase:
       cliArgs.tmpDirBase
-      ?? process.env.AD4M_WT_TMPDIR
+      ?? env.AD4M_WT_TMPDIR
       ?? systemTmp,
     basePort:
       cliArgs.basePort
-      ?? (process.env.AD4M_WT_BASE_PORT ? parseInt(process.env.AD4M_WT_BASE_PORT, 10) : 12100),
+      ?? (env.AD4M_WT_BASE_PORT ? parseInt(env.AD4M_WT_BASE_PORT, 10) : 12100),
     resultsDir:
       cliArgs.resultsDir
-      ?? process.env.AD4M_WT_RESULTS_DIR
+      ?? env.AD4M_WT_RESULTS_DIR
       ?? join(process.cwd(), "results"),
+    runHolochain:
+      cliArgs.runHolochain
+      ?? parseBool(env.AD4M_WT_RUN_HOLOCHAIN)
+      ?? true,
+    // `|| 1` turns a non-numeric value (NaN) into one run.
+    repeat: Math.max(
+      1,
+      (cliArgs.repeat
+        ?? (env.AD4M_WT_REPEAT ? parseInt(env.AD4M_WT_REPEAT, 10) : 1)) || 1,
+    ),
+    linkServerUrl:
+      cliArgs.linkServerUrl
+      ?? env.LINK_SERVER_URL
+      ?? "http://127.0.0.1:3456",
   };
 }
 

@@ -4,7 +4,7 @@
  */
 
 import { spawn, ChildProcess, execSync } from "child_process";
-import { mkdirSync, existsSync, writeFileSync, rmSync, readFileSync, copyFileSync, statSync } from "fs";
+import { mkdirSync, existsSync, writeFileSync, rmSync, readFileSync, copyFileSync, statSync, createWriteStream } from "fs";
 import { homedir, tmpdir } from "os";
 import { join } from "path";
 import WebSocket from "ws";
@@ -49,6 +49,14 @@ export interface ExecutorConfig {
   buildDir: string;
   /** Extra CLI args appended to the `run` invocation (e.g. ["--language-language-only","true"]). */
   extraArgs?: string[];
+  /**
+   * `--run-holochain` value. Undefined leaves the executor default (on).
+   * Always passed explicitly by the runner so an inherited AD4M_RUN_HOLOCHAIN
+   * cannot change a run silently.
+   */
+  runHolochain?: boolean;
+  /** Keep an existing data directory (restart) instead of wiping and re-running `init`. */
+  skipInit?: boolean;
 }
 
 export interface ExecutorInstance {
@@ -169,8 +177,8 @@ export async function startExecutor(
   binaryPath: string,
   config: ExecutorConfig
 ): Promise<ChildProcess> {
-  // Initialize if needed
-  await initExecutor(binaryPath, config.dataPath);
+  // Initialize unless this is a restart on an existing data directory
+  if (!config.skipInit) await initExecutor(binaryPath, config.dataPath);
 
   console.log(`[executor] Starting on port ${config.port}, data: ${config.dataPath}`);
 
@@ -183,17 +191,30 @@ export async function startExecutor(
     "--hc-use-bootstrap", "false",
     "--hc-use-proxy", "false",
     "--enable-multi-user", "true",
+    // The executor exits when the wind tunnel does, so a crashed run leaves no executor behind.
+    "--exit-with-parent", "true",
+    ...(config.runHolochain === undefined ? [] : ["--run-holochain", String(config.runHolochain)]),
     ...(config.extraArgs ?? []),
   ], {
     stdio: ["pipe", "pipe", "pipe"],
     env: { ...process.env, RUST_LOG: "info" },
   });
 
+  // AD4M_WT_EXECUTOR_LOG_DIR keeps each executor's output (e.g. the `timing:` lines).
+  const logDir = process.env.AD4M_WT_EXECUTOR_LOG_DIR;
+  let logStream: ReturnType<typeof createWriteStream> | null = null;
+  if (logDir) {
+    mkdirSync(logDir, { recursive: true });
+    logStream = createWriteStream(join(logDir, `executor-${config.port}-${Date.now()}.log`), { flags: "a" });
+    proc.once("exit", () => logStream?.end());
+  }
   proc.stdout?.on("data", (d) => {
+    logStream?.write(d);
     const line = d.toString().trim();
     if (line && process.env.VERBOSE) console.log(`[exec:${config.port}:out] ${line}`);
   });
   proc.stderr?.on("data", (d) => {
+    logStream?.write(d);
     const line = d.toString().trim();
     if (line && process.env.VERBOSE) console.log(`[exec:${config.port}:err] ${line}`);
   });
@@ -201,10 +222,16 @@ export async function startExecutor(
   return proc;
 }
 
+/**
+ * Poll `/health` (and one RPC answer) until the executor is up. Returns the
+ * wait in ms; its resolution is `pollMs`, so boot-time measurements pass a
+ * small value.
+ */
 export async function waitForHealth(
   port: number,
   timeoutMs: number = 60000,
-  adminToken: string = "test123"
+  adminToken: string = "test123",
+  pollMs: number = 500
 ): Promise<number> {
   const start = performance.now();
   const deadline = start + timeoutMs;
@@ -218,13 +245,13 @@ export async function waitForHealth(
         // Also verify WS endpoint is accepting connections
         const wsReady = await checkWsReady(port, adminToken, 5000).catch(() => false);
         if (!wsReady) {
-          await sleep(500);
+          await sleep(pollMs);
           continue;
         }
         return performance.now() - start;
       }
     } catch {}
-    await sleep(500);
+    await sleep(pollMs);
   }
 
   throw new Error(`Executor on port ${port} did not become healthy within ${timeoutMs}ms`);
@@ -254,11 +281,24 @@ async function checkWsReady(port: number, token: string, timeoutMs: number): Pro
 }
 
 export function stopExecutor(proc: ChildProcess): void {
-  if (proc && !proc.killed) {
-    proc.kill("SIGTERM");
-    setTimeout(() => {
-      if (!proc.killed) proc.kill("SIGKILL");
-    }, 5000);
+  void stopExecutorAndWait(proc);
+}
+
+/**
+ * SIGTERM, then SIGKILL after `graceMs` if the process has not exited.
+ * `proc.killed` turns true as soon as a signal is sent, so exit is tracked
+ * through `exitCode`/`signalCode` and the `exit` event instead.
+ */
+export async function stopExecutorAndWait(proc: ChildProcess | null, graceMs = 10000): Promise<void> {
+  if (!proc) return;
+  const exited = () => proc.exitCode !== null || proc.signalCode !== null;
+  if (exited()) return;
+  const done = new Promise<void>((resolve) => proc.once("exit", () => resolve()));
+  proc.kill("SIGTERM");
+  const graceful = await Promise.race([done.then(() => true), sleep(graceMs).then(() => false)]);
+  if (!graceful && !exited()) {
+    proc.kill("SIGKILL");
+    await Promise.race([done, sleep(5000)]);
   }
 }
 
