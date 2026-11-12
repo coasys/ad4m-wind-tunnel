@@ -9,7 +9,8 @@
 import { existsSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
 import { InstrumentedClient } from "./client.js";
-import { buildExecutor, startExecutor, waitForHealth, stopExecutor, sleep, initExecutor, ExecutorConfig } from "./executor.js";
+import { buildExecutor, startExecutor, waitForHealth, stopExecutorAndWait, sleep, ExecutorConfig } from "./executor.js";
+import { captureRunEnvironment, finishRunEnvironment } from "./run-environment.js";
 import { Scenario, ScenarioContext, ScenarioResult } from "./scenario.js";
 import {
   s1ColdStart, s2LinkThroughput, s2bMillionLinks, s3PerspectiveScaling, s4LanguageInstallStorm,
@@ -20,12 +21,18 @@ import {
   a3McpThroughput,
   s9NeighbourhoodMemoryLeak,
   s10SubscriptionFanout, s12PersistenceColdQuery, s13ReadWriteMix, s14MultiPerspectiveLoad,
-  s15LeakAttribution,
+  s15LeakAttribution, s16IdleCpu,
+  p1IdleBaseline, p2SpaceCostPerspectives, p2SpaceCostNeighbourhoods,
+  p3ColdOpen, p4SpaceRemoval, p5StorageAttribution,
 } from "./scenarios/index.js";
 import { consoleReport, jsonReport, comparisonReport } from "./reporters.js";
+import { scenarioName } from "./platform/common.js";
 import { config, validateAdamRepo } from "./config.js";
 
 const RESULTS_DIR = config.resultsDir;
+// One source of truth for the link-server URL: `--link-server-url` wins over
+// the env, and every consumer (convergence registry, platform scenarios) reads the env.
+process.env.LINK_SERVER_URL = config.linkServerUrl;
 
 const ALL_SCENARIOS: Scenario[] = [
   s1ColdStart, s2LinkThroughput, s2bMillionLinks, s3PerspectiveScaling, s4LanguageInstallStorm,
@@ -36,7 +43,17 @@ const ALL_SCENARIOS: Scenario[] = [
   a3McpThroughput,
   s9NeighbourhoodMemoryLeak,
   s10SubscriptionFanout, s12PersistenceColdQuery, s13ReadWriteMix, s14MultiPerspectiveLoad,
-  s15LeakAttribution,
+  s15LeakAttribution, s16IdleCpu,
+];
+
+/**
+ * Platform baseline family: what a hosted ADAM platform costs per executor.
+ * Not part of the default (no `--scenario`) run: each one holds long idle
+ * windows. Select them by id or with `--scenario platform`.
+ */
+const PLATFORM_SCENARIOS: Scenario[] = [
+  p1IdleBaseline, p2SpaceCostPerspectives, p2SpaceCostNeighbourhoods,
+  p3ColdOpen, p4SpaceRemoval, p5StorageAttribution,
 ];
 
 function parseArgs() {
@@ -70,31 +87,64 @@ async function runScenariosForBranch(
   port: number
 ): Promise<ScenarioResult[]> {
   const results: ScenarioResult[] = [];
-  const dirName = branchToDirName(branch);
-
   for (const scenario of scenarios) {
-    console.log(`\n[runner] Running ${scenario.id}: ${scenario.name} on ${branch}...`);
-
-    // Fresh executor for each scenario
-    const dataPath = join(config.tmpDirBase, `ad4m-wt-data-${dirName}-${scenario.id}`);
-    const extraArgs: string[] = [];
-    if (scenario.id === "s9" && (process.env.S9_MODE || "").toLowerCase() === "no-languages") {
-      extraArgs.push("--language-language-only", "true");
+    for (let runIndex = 1; runIndex <= config.repeat; runIndex++) {
+      const result = await runOneScenario(branch, scenario, binaryPath, port, runIndex);
+      // Repeated runs keep one file each: `<scenario>-run<i>.json`.
+      if (config.repeat > 1) result.scenario = `${result.scenario}-run${runIndex}`;
+      results.push(result);
     }
-    const config_: ExecutorConfig = {
-      branch,
-      port,
-      dataPath,
-      adminToken: config.adminToken,
-      adamRepoPath: config.adamRepoPath,
-      buildDir: join(config.tmpDirBase, `ad4m-build-${dirName}`),
-      extraArgs: extraArgs.length > 0 ? extraArgs : undefined,
-    };
+  }
+  return results;
+}
 
-    let proc: any = null;
-    let proc2: any = null;
+async function runOneScenario(
+  branch: string,
+  scenario: Scenario,
+  binaryPath: string,
+  port: number,
+  runIndex: number
+): Promise<ScenarioResult> {
+  const dirName = branchToDirName(branch);
+  const runLabel = config.repeat > 1 ? ` (run ${runIndex}/${config.repeat})` : "";
+  console.log(`\n[runner] Running ${scenario.id}: ${scenario.name} on ${branch}${runLabel} [holochain ${config.runHolochain ? "on" : "off"}]...`);
 
-    try {
+  const crashResult = (summary: string, error: string): ScenarioResult => ({
+    scenario: scenarioName(scenario.id, scenario.name),
+    branch,
+    passed: false,
+    startTime: Date.now(),
+    endTime: Date.now(),
+    durationMs: 0,
+    metrics: { error },
+    samples: [],
+    summary,
+  });
+
+  // Fresh executor for each scenario run
+  const dataPath = join(config.tmpDirBase, `ad4m-wt-data-${dirName}-${scenario.id}`);
+  const extraArgs: string[] = [];
+  if (scenario.id === "s9" && (process.env.S9_MODE || "").toLowerCase() === "no-languages") {
+    extraArgs.push("--language-language-only", "true");
+  }
+  const config_: ExecutorConfig = {
+    branch,
+    port,
+    dataPath,
+    adminToken: config.adminToken,
+    adamRepoPath: config.adamRepoPath,
+    buildDir: join(config.tmpDirBase, `ad4m-build-${dirName}`),
+    extraArgs: extraArgs.length > 0 ? extraArgs : undefined,
+    runHolochain: config.runHolochain,
+  };
+
+  let proc: any = null;
+  let proc2: any = null;
+  let result: ScenarioResult;
+
+  try {
+    let client: InstrumentedClient | undefined;
+    if (!scenario.managesOwnEnvironment) {
       proc = await startExecutor(binaryPath, config_);
 
       // Wait for health
@@ -111,17 +161,12 @@ async function runScenariosForBranch(
           console.log(`[runner] Second executor healthy on port ${port + 1}`);
         } catch (err: any) {
           console.log(`[runner] Second executor failed: ${err.message}`);
-          if (proc2) stopExecutor(proc2);
+          await stopExecutorAndWait(proc2);
           proc2 = null;
         }
       }
 
-      // Create client
-      const client = new InstrumentedClient({
-        port,
-        adminToken: config.adminToken,
-      });
-
+      client = new InstrumentedClient({ port, adminToken: config.adminToken });
       await client.connect();
 
       // Generate agent identity
@@ -133,63 +178,57 @@ async function runScenariosForBranch(
           console.log(`[runner] agent.generate: ${err.message}`);
         }
       }
+    }
 
-      const ctx: ScenarioContext = {
-        client,
-        branch,
-        port,
-        adminToken: config.adminToken,
-        adamRepoPath: config.adamRepoPath,
-        tmpDirBase: config.tmpDirBase,
-        executorPath: binaryPath,
-      };
+    const environment = await captureRunEnvironment({
+      client,
+      executorPath: binaryPath,
+      runHolochain: config.runHolochain,
+      runIndex,
+    });
 
-      try {
-        const result = await scenario.run(ctx);
-        results.push(result);
-        const verdict = result.passed ? "PASS" : "FAIL";
-        console.log(`[runner] ${scenario.id} ${verdict}: ${result.summary}`);
-      } catch (err: any) {
-        console.error(`[runner] ${scenario.id} CRASHED: ${err.message}`);
-        results.push({
-          scenario: `${scenario.id}-${scenario.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-+$/, "")}`,
-          branch,
-          passed: false,
-          startTime: Date.now(),
-          endTime: Date.now(),
-          durationMs: 0,
-          metrics: { error: err.message },
-          samples: [],
-          summary: `CRASHED: ${err.message}`,
-        });
-      } finally {
-        await client.disconnect();
-      }
+    const ctx: ScenarioContext = {
+      client: client as InstrumentedClient,
+      branch,
+      port,
+      adminToken: config.adminToken,
+      adamRepoPath: config.adamRepoPath,
+      tmpDirBase: config.tmpDirBase,
+      executorPath: binaryPath,
+      runHolochain: config.runHolochain,
+      dataPath,
+      extraArgs,
+    };
+
+    try {
+      result = await scenario.run(ctx);
+      const verdict = result.skipped ? "SKIPPED" : result.passed ? "PASS" : "FAIL";
+      console.log(`[runner] ${scenario.id} ${verdict}: ${result.summary}`);
     } catch (err: any) {
-      console.error(`[runner] Failed to start executor for ${scenario.id}: ${err.message}`);
-      results.push({
-        scenario: `${scenario.id}-${scenario.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-+$/, "")}`,
-        branch,
-        passed: false,
-        startTime: Date.now(),
-        endTime: Date.now(),
-        durationMs: 0,
-        metrics: { error: `Executor start failed: ${err.message}` },
-        samples: [],
-        summary: `EXECUTOR FAILED: ${err.message}`,
-      });
+      console.error(`[runner] ${scenario.id} CRASHED: ${err.stack ?? err.message}`);
+      result = crashResult(`CRASHED: ${err.message}`, err.message);
     } finally {
-      if (proc2) stopExecutor(proc2);
-      if (proc) stopExecutor(proc);
-      await sleep(2000);
-      // Cleanup data
-      if (existsSync(join(config.tmpDirBase, `ad4m-wt-data-${dirName}-${scenario.id}`))) {
-        rmSync(join(config.tmpDirBase, `ad4m-wt-data-${dirName}-${scenario.id}`), { recursive: true, force: true });
-      }
+      await client?.disconnect();
+    }
+    // A scenario that started its own executor reports the commit it saw.
+    result.environment = finishRunEnvironment({
+      ...environment,
+      ad4mCommit: environment.ad4mCommit ?? result.environment?.ad4mCommit ?? null,
+      ad4mExecutorVersion: environment.ad4mExecutorVersion ?? result.environment?.ad4mExecutorVersion ?? null,
+    });
+  } catch (err: any) {
+    console.error(`[runner] Failed to start executor for ${scenario.id}: ${err.message}`);
+    result = crashResult(`EXECUTOR FAILED: ${err.message}`, `Executor start failed: ${err.message}`);
+  } finally {
+    await stopExecutorAndWait(proc2);
+    await stopExecutorAndWait(proc);
+    await sleep(2000);
+    // Cleanup data
+    if (existsSync(dataPath)) {
+      rmSync(dataPath, { recursive: true, force: true });
     }
   }
-
-  return results;
+  return result;
 }
 
 async function main(): Promise<void> {
@@ -199,9 +238,21 @@ async function main(): Promise<void> {
   console.log("╚══════════════════════════════════════════════════════════════╝");
   console.log(`\nConfig: ${JSON.stringify(args, null, 2)}\n`);
 
-  const scenarios = args.scenarios.length > 0
-    ? ALL_SCENARIOS.filter((s) => args.scenarios.includes(s.id))
+  const selectable = [...ALL_SCENARIOS, ...PLATFORM_SCENARIOS];
+  const wanted = args.scenarios.flatMap((s) =>
+    s === "platform" ? PLATFORM_SCENARIOS.map((p) => p.id) : [s]
+  );
+  const scenarios = wanted.length > 0
+    ? wanted.map((id) => {
+        const s = selectable.find((x) => x.id === id);
+        if (!s) {
+          console.error(`[runner] Unknown scenario id: ${id}`);
+          process.exit(1);
+        }
+        return s;
+      })
     : ALL_SCENARIOS;
+  console.log(`Holochain: ${config.runHolochain ? "on" : "off"} | repeat: ${config.repeat}`);
 
   // Branches come from CLI args; default to "default" label if none specified
   const branches = args.branches.length > 0

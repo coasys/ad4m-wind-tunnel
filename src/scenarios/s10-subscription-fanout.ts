@@ -51,38 +51,31 @@ async function createWSSubscriber(
 
   await new Promise<void>((resolve, reject) => {
     ws.on("open", () => {
-      // Subscribe via JSON-RPC style
+      // Events ride the RPC socket; a socket gets none until it calls
+      // `events.watch` (rust-executor/src/api/event_interest.rs).
       ws.send(JSON.stringify({
-        id: 1,
-        method: "perspective.subscribe_links",
-        params: { uuid: perspectiveUuid },
+        id: "watch",
+        type: "events.watch",
+        params: { "link-added": [perspectiveUuid] },
       }));
-      resolve();
     });
     ws.on("message", (data) => {
       try {
         const msg = JSON.parse(data.toString());
-        // Subscription notifications come as events (no id field, have method field)
-        if (msg.method === "perspective.link_added" || msg.params?.event === "link_added") {
-          const receivedAt = performance.now();
-          if (delayMs) {
-            const end = performance.now() + delayMs;
-            while (performance.now() < end) { /* busy wait */ }
-          }
-          notifications.push({
-            linkTimestamp: msg.params?.link?.timestamp || msg.params?.timestamp || 0,
-            receivedAt,
-          });
+        if (msg.id === "watch") {
+          if (msg.error) reject(new Error(`events.watch: ${JSON.stringify(msg.error)}`));
+          else resolve();
+          return;
         }
-        // Also handle results without explicit event type — just look for link data
-        if (msg.result === undefined && msg.id === undefined && msg.data) {
+        // Event frames: `{ type: "link-added", perspectiveUuid, link: { data, timestamp, ... } }`
+        if (msg.type === "link-added") {
           const receivedAt = performance.now();
           if (delayMs) {
             const end = performance.now() + delayMs;
             while (performance.now() < end) { /* busy wait */ }
           }
           notifications.push({
-            linkTimestamp: msg.data?.timestamp || 0,
+            linkTimestamp: msg.link?.timestamp ? Date.parse(msg.link.timestamp) || 0 : 0,
             receivedAt,
           });
         }

@@ -3,7 +3,9 @@
 services:
   link-server:
     build:
-      context: ../../ad4m/link-server
+      # AD4M_REPO picks the ad4m checkout (e.g. a worktree at the commit under
+      # test); compose resolves a relative value against this infra/ directory.
+      context: ${AD4M_REPO:-../../ad4m}/link-server
       dockerfile: Dockerfile
     container_name: ad4m-test-link-server
     ports:

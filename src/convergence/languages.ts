@@ -24,6 +24,24 @@ function hex32(seed: string): string {
 const WORKSPACE_ROOT = process.env.CONVERGENCE_WORKSPACE_ROOT || resolve(process.cwd(), "..");
 
 /**
+ * The ad4m checkout the server link language is read from: `AD4M_REPO`
+ * (the same variable `--ad4m-repo` sets for builds), else `<workspace>/ad4m`.
+ */
+export function ad4mRepoRoot(): string {
+  const argIdx = process.argv.indexOf("--ad4m-repo");
+  if (argIdx >= 0 && process.argv[argIdx + 1]) return resolve(process.argv[argIdx + 1]);
+  return process.env.AD4M_REPO ? resolve(process.env.AD4M_REPO) : resolve(WORKSPACE_ROOT, "ad4m");
+}
+
+/** Built bundle of `bootstrap-languages/server-link-language` (`deno run --allow-all esbuild.ts`). */
+export function serverLinkLanguageBundlePath(): string {
+  return (
+    process.env.SERVER_LINK_LANGUAGE_BUNDLE ||
+    resolve(ad4mRepoRoot(), "bootstrap-languages/server-link-language/build/bundle.js")
+  );
+}
+
+/**
  * Solid (Community Solid Server) endpoint — env-configurable so CSS can run on a
  * free port when :3000 is occupied by another local service. The language bundle
  * and the health probe must agree with the port the compose file binds, so all
@@ -462,16 +480,18 @@ export const CONVERGENCE_LANGUAGES: ConvergenceLanguage[] = [
     // AUTO_ADMIT=true on the Docker container so Agent B's DID auth succeeds
     // without Agent A explicitly adding them to the room ACL.
     id: "link-server",
-    bundlePath: resolve(WORKSPACE_ROOT, "ad4m/bootstrap-languages/server-link-language/build/bundle.js"),
-    possibleTemplateParams: ["SERVER_URL", "ROOM_ID"],
+    bundlePath: serverLinkLanguageBundlePath(),
+    // The two `//!@ad4m-template-variable`s in server-link-language/index.ts.
+    // (Older builds named the second one ROOM_ID; dev names it UID.)
+    possibleTemplateParams: ["SERVER_URL", "UID"],
     backend: {
       compose: "docker-compose.link-server.yml",
       healthTcp: { host: "127.0.0.1", port: 3456 },
     },
     makeTemplateData(neighbourhoodId: string): Record<string, string> {
       return {
-        SERVER_URL: "http://127.0.0.1:3456",
-        ROOM_ID: neighbourhoodId,
+        SERVER_URL: process.env.LINK_SERVER_URL || "http://127.0.0.1:3456",
+        UID: neighbourhoodId,
       };
     },
   },

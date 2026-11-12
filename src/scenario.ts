@@ -3,6 +3,7 @@
  */
 
 import { InstrumentedClient } from "./client.js";
+import type { RunEnvironment } from "./run-environment.js";
 
 export interface ScenarioResult {
   scenario: string;
@@ -15,6 +16,12 @@ export interface ScenarioResult {
   metrics: Record<string, any>;
   samples: Array<{ name: string; durationMs: number; timestamp: number; error?: string }>;
   summary: string;
+  /** True when a dependency was unreachable and nothing was measured. */
+  skipped?: boolean;
+  /** Executor build, machine, Holochain flag and load (set by the runner). */
+  environment?: RunEnvironment;
+  /** Human-readable report written next to the JSON as `<scenario>.md`. */
+  markdown?: string;
 }
 
 export interface ScenarioContext {
@@ -33,6 +40,12 @@ export interface ScenarioContext {
    * they work under `--executor-path`, where the binary is not in the build dir.
    */
   executorPath?: string;
+  /** Whether the runner started the executor with Holochain (`--run-holochain`). */
+  runHolochain?: boolean;
+  /** Data directory for this scenario run; the runner deletes it afterwards. */
+  dataPath?: string;
+  /** Extra `run` flags for this scenario (scenarios that start their own executor reuse them). */
+  extraArgs?: string[];
 }
 
 export interface Scenario {
