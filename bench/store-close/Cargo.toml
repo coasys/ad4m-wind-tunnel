@@ -1,0 +1,29 @@
+[package]
+name = "store-close"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Does closing Oxigraph/RocksDB stores give memory back? Stand-alone bench, not part of the TS build."
+
+# Own workspace: never pulled into another Cargo workspace.
+[workspace]
+
+[features]
+default = []
+# jemalloc as the global allocator, built the way the ADAM executor builds it
+# (cli/Cargo.toml: tikv-jemallocator 0.6, unprefixed_malloc_on_supported_platforms),
+# so RocksDB's C++ allocations go through jemalloc too.
+jemalloc = ["dep:tikv-jemallocator", "dep:tikv-jemalloc-ctl", "dep:tikv-jemalloc-sys"]
+
+[dependencies]
+oxigraph = { version = "=0.5.13", default-features = false, features = ["rocksdb", "rdf-12"] }
+sha2 = "0.10"
+hex = "0.4"
+libc = "0.2"
+serde_json = "1"
+tikv-jemallocator = { version = "0.6", optional = true, features = ["unprefixed_malloc_on_supported_platforms"] }
+tikv-jemalloc-ctl = { version = "0.6", optional = true, features = ["stats"] }
+tikv-jemalloc-sys = { version = "0.6", optional = true, features = ["unprefixed_malloc_on_supported_platforms"] }
+
+[profile.release]
+debug = false

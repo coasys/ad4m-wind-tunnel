@@ -57,6 +57,13 @@ export interface ExecutorConfig {
   runHolochain?: boolean;
   /** Keep an existing data directory (restart) instead of wiping and re-running `init`. */
   skipInit?: boolean;
+  /**
+   * Command that wraps the `run` invocation, e.g. `systemd-run --user --scope …`
+   * so the executor gets its own cgroup (f1 sets a CPU quota on it). The
+   * wrapper must exec the executor in place, so the spawned pid is the
+   * executor's. `init` is never wrapped.
+   */
+  launcher?: string[];
 }
 
 export interface ExecutorInstance {
@@ -182,7 +189,9 @@ export async function startExecutor(
 
   console.log(`[executor] Starting on port ${config.port}, data: ${config.dataPath}`);
 
-  const proc = spawn(binaryPath, [
+  const launcher = config.launcher ?? [];
+  const proc = spawn(launcher.length > 0 ? launcher[0] : binaryPath, [
+    ...(launcher.length > 0 ? [...launcher.slice(1), binaryPath] : []),
     "run",
     "--app-data-path", config.dataPath,
     "--port", String(config.port),
