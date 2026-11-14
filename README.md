@@ -98,6 +98,46 @@ P5_LINK_COUNTS=0,100,1000,10000  P5_NH_LINKS=100  P5_SETTLE_SEC=15  P5_QUERY_ROU
 
 Run the long sweep under a memory cap, e.g. `systemd-run --user --unit=wt-platform --collect -p MemoryMax=16G -p MemorySwapMax=0 bash -c 'exec > run.log 2>&1; …'`.
 
+##### Fault injection (F1)
+
+`f1` (Slow Executor) is not in the default run. Select it by id or with `--scenario fault`. It needs a systemd user manager with the `cpu` controller delegated (it skips otherwise).
+
+One space with WE-shaped data (channel messages and call transcript lines, `has_child` + `flux://body`). Clients hold live SPARQL queries (newest 50 by link timestamp, using the `<<( s p o )>>` reifier), page older messages, and a bot holds an "everything" query. Speakers write one transcript line per second each; an auto-processor adds and removes an interpretation link. For each slowdown level the executor restarts on that data inside its own `systemd-run --user --scope`, and after a baseline phase its CPU quota is cut to 1/N of one core for the fault phase, then lifted. Every second it records executor CPU, RSS, threads, running SPARQL evaluations (`ad4m-eval-watchdog` threads), executor subscriptions (from its log), client live queries, calls in flight, timeouts and re-subscribes. Each level gets a pileup verdict (backlog still growing at the end of the fault) and a recovery time.
+
+```bash
+flock /tmp/arcadia-measure.lock npx tsx src/main.ts --scenario f1 --skip-build --executor-path /path/to/ad4m-executor \
+  --run-holochain false --branch fault-<sha>
+# legacy client behaviour (no cancel, no dispose, immediate re-subscribe):
+F1_CLIENT_MODE=legacy npx tsx src/main.ts --scenario f1 …
+```
+
+Tunables (env, defaults shown):
+
+```bash
+F1_LINKS=30000 F1_CLIENTS=10 F1_BOTS=1 F1_SPEAKERS=4 F1_WRITE_MS=1000 F1_AUTOPROC_MS=2000 F1_PAGE_EVERY_SEC=10
+F1_TIMEOUT_MS=30000 F1_LEVELS=1,4,20,100 F1_BASELINE_SEC=60 F1_FAULT_SEC=120 F1_RECOVERY_SEC=180 F1_SETTLE_SEC=20
+F1_CLIENT_MODE=sdk|legacy F1_BOT_QUERY=links|all F1_NEIGHBOURHOOD=0 F1_EXEC_MEMORY_MAX=24G
+```
+
+A full default run takes about 30 minutes; run it under `systemd-run --user --unit=… --collect -p MemoryMax=32G -p MemorySwapMax=0`.
+
+##### Store close bench (`bench/store-close/`)
+
+A stand-alone Rust bench (not part of the TS build): opens N Oxigraph 0.5.13 / RocksDB stores, writes M ADAM-shaped links each (one transaction per link: the triple, its reifier and six annotations), optionally flushes, drops them all, and records RSS right after, after a settle, after `malloc_trim(0)` and (jemalloc) after an arena purge; then times a reopen. Built with glibc malloc and with jemalloc the way the ADAM executor builds it.
+
+```bash
+( cd bench/store-close && cargo build --release && cp target/release/store-close target/store-close-glibc \
+  && cargo build --release --features jemalloc && cp target/release/store-close target/store-close-jemalloc )
+bench/store-close/run-matrix.sh results/<dir>/store-close            # one JSON line per run in runs.jsonl
+npx tsx src/bench/store-close-summary.ts results/<dir>/store-close  # SUMMARY.md
+```
+
+Each row takes the measurement lock on its own. To take it once per batch
+instead, hold it yourself and set `LOCKED=1`, e.g.
+`for m in 0 1000 10000; do MS=$m LOCKED=1 flock /tmp/arcadia-measure.lock bench/store-close/run-matrix.sh <out>; done`.
+Rows that already have a good result in `<out>/runs.jsonl` are skipped, so a
+stopped matrix resumes where it left off.
+
 ##### S9/S15 phase tuning
 
 Both leak scenarios expose phase-duration env vars. Defaults (~4 min/mode for S9, ~3.5 min for S15) are tuned for tight inner-loop iteration; bump them up for high-fidelity PR-gate runs.
@@ -136,6 +176,7 @@ src/
 ├── run-environment.ts# Commit, machine, Holochain flag, load average recorded per result
 ├── proc-metrics.ts   # /proc readers: RSS, swap, threads by pool, CPU ticks, children, smaps
 ├── platform/         # Platform baseline helpers (idle windows, spaces, stats) + summarize.ts
+├── fault/            # F1 fault injection: cgroup CPU quota, SDK-like live-query clients, pileup/recovery analysis
 └── scenarios/        # All scenario implementations
 ```
 

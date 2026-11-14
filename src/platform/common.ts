@@ -254,7 +254,7 @@ export interface OwnedExecutor {
  */
 export async function launchExecutor(
   ctx: ScenarioContext,
-  opts: { port: number; dataPath: string; skipInit: boolean }
+  opts: { port: number; dataPath: string; skipInit: boolean; launcher?: string[] }
 ): Promise<OwnedExecutor> {
   if (!ctx.executorPath) throw new Error("no executor path in the scenario context");
   const cfg: ExecutorConfig = {
@@ -267,6 +267,7 @@ export async function launchExecutor(
     extraArgs: ctx.extraArgs && ctx.extraArgs.length > 0 ? ctx.extraArgs : undefined,
     runHolochain: ctx.runHolochain,
     skipInit: opts.skipInit,
+    launcher: opts.launcher,
   };
   const t0 = performance.now();
   const proc = await startExecutor(ctx.executorPath, cfg);

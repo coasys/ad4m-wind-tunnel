@@ -1,0 +1,100 @@
+2026-11-14T14:23:20+11:00 start n50-m0-flush0-glibc
+2026-11-14T14:31:28+11:00 done n50-m0-flush0-glibc
+2026-11-14T14:31:28+11:00 start n50-m0-flush0-jemalloc
+2026-11-14T14:34:42+11:00 done n50-m0-flush0-jemalloc
+2026-11-14T14:34:42+11:00 start n50-m0-flush0-jemalloc-conf
+2026-11-14T14:47:09+11:00 done n50-m0-flush0-jemalloc-conf
+2026-11-14T14:47:09+11:00 start n50-m0-flush1-glibc
+2026-11-14T15:00:40+11:00 done n50-m0-flush1-glibc
+2026-11-14T15:00:40+11:00 start n50-m0-flush1-jemalloc
+2026-11-14T15:10:44+11:00 done n50-m0-flush1-jemalloc
+2026-11-14T15:10:44+11:00 start n50-m0-flush1-jemalloc-conf
+2026-11-14T15:22:59+11:00 done n50-m0-flush1-jemalloc-conf
+2026-11-14T15:22:59+11:00 start n200-m0-flush0-glibc
+2026-11-14T15:24:12+11:00 batched resume: one lock per link count
+2026-11-14T15:26:09+11:00 start n200-m0-flush0-glibc
+2026-11-14T15:26:10+11:00 FAILED n200-m0-flush0-glibc
+2026-11-14T15:26:10+11:00 start n200-m0-flush0-jemalloc
+2026-11-14T15:26:10+11:00 FAILED n200-m0-flush0-jemalloc
+2026-11-14T15:26:10+11:00 start n200-m0-flush0-jemalloc-conf
+2026-11-14T15:26:10+11:00 FAILED n200-m0-flush0-jemalloc-conf
+2026-11-14T15:26:10+11:00 start n200-m0-flush1-glibc
+2026-11-14T15:26:10+11:00 FAILED n200-m0-flush1-glibc
+2026-11-14T15:26:10+11:00 start n200-m0-flush1-jemalloc
+2026-11-14T15:26:11+11:00 FAILED n200-m0-flush1-jemalloc
+2026-11-14T15:26:11+11:00 start n200-m0-flush1-jemalloc-conf
+2026-11-14T15:26:11+11:00 FAILED n200-m0-flush1-jemalloc-conf
+2026-11-14T15:26:11+11:00 matrix finished
+2026-11-14T15:29:14+11:00 start n50-m1000-flush0-glibc
+2026-11-14T15:29:25+11:00 done n50-m1000-flush0-glibc
+2026-11-14T15:29:25+11:00 start n50-m1000-flush0-jemalloc
+2026-11-14T15:29:36+11:00 done n50-m1000-flush0-jemalloc
+2026-11-14T15:29:36+11:00 start n50-m1000-flush0-jemalloc-conf
+2026-11-14T15:29:55+11:00 batched resume 2: nofile raised, skip done rows
+2026-11-14T15:29:55+11:00 skip n50-m0-flush0-glibc (already done)
+2026-11-14T15:29:55+11:00 skip n50-m0-flush0-jemalloc (already done)
+2026-11-14T15:29:55+11:00 skip n50-m0-flush0-jemalloc-conf (already done)
+2026-11-14T15:29:55+11:00 skip n50-m0-flush1-glibc (already done)
+2026-11-14T15:29:55+11:00 skip n50-m0-flush1-jemalloc (already done)
+2026-11-14T15:29:55+11:00 skip n50-m0-flush1-jemalloc-conf (already done)
+2026-11-14T15:29:55+11:00 start n200-m0-flush0-glibc
+2026-11-14T15:30:07+11:00 done n200-m0-flush0-glibc
+2026-11-14T15:30:07+11:00 start n200-m0-flush0-jemalloc
+2026-11-14T15:30:18+11:00 done n200-m0-flush0-jemalloc
+2026-11-14T15:30:18+11:00 start n200-m0-flush0-jemalloc-conf
+2026-11-14T15:30:30+11:00 done n200-m0-flush0-jemalloc-conf
+2026-11-14T15:30:30+11:00 start n200-m0-flush1-glibc
+2026-11-14T15:30:41+11:00 done n200-m0-flush1-glibc
+2026-11-14T15:30:41+11:00 start n200-m0-flush1-jemalloc
+2026-11-14T15:30:53+11:00 done n200-m0-flush1-jemalloc
+2026-11-14T15:30:53+11:00 start n200-m0-flush1-jemalloc-conf
+2026-11-14T15:31:04+11:00 done n200-m0-flush1-jemalloc-conf
+2026-11-14T15:31:04+11:00 matrix finished
+2026-11-14T15:31:04+11:00 skip n50-m1000-flush0-glibc (already done)
+2026-11-14T15:31:04+11:00 skip n50-m1000-flush0-jemalloc (already done)
+2026-11-14T15:31:04+11:00 start n50-m1000-flush0-jemalloc-conf
+2026-11-14T15:31:15+11:00 done n50-m1000-flush0-jemalloc-conf
+2026-11-14T15:31:15+11:00 start n50-m1000-flush1-glibc
+2026-11-14T15:31:26+11:00 done n50-m1000-flush1-glibc
+2026-11-14T15:31:26+11:00 start n50-m1000-flush1-jemalloc
+2026-11-14T15:31:38+11:00 done n50-m1000-flush1-jemalloc
+2026-11-14T15:31:38+11:00 start n50-m1000-flush1-jemalloc-conf
+2026-11-14T15:31:49+11:00 done n50-m1000-flush1-jemalloc-conf
+2026-11-14T15:31:49+11:00 start n200-m1000-flush0-glibc
+2026-11-14T15:32:06+11:00 done n200-m1000-flush0-glibc
+2026-11-14T15:32:06+11:00 start n200-m1000-flush0-jemalloc
+2026-11-14T15:32:20+11:00 done n200-m1000-flush0-jemalloc
+2026-11-14T15:32:20+11:00 start n200-m1000-flush0-jemalloc-conf
+2026-11-14T15:32:38+11:00 done n200-m1000-flush0-jemalloc-conf
+2026-11-14T15:32:38+11:00 start n200-m1000-flush1-glibc
+2026-11-14T15:32:54+11:00 done n200-m1000-flush1-glibc
+2026-11-14T15:32:54+11:00 start n200-m1000-flush1-jemalloc
+2026-11-14T15:33:07+11:00 done n200-m1000-flush1-jemalloc
+2026-11-14T15:33:08+11:00 start n200-m1000-flush1-jemalloc-conf
+2026-11-14T15:33:25+11:00 done n200-m1000-flush1-jemalloc-conf
+2026-11-14T15:33:25+11:00 matrix finished
+2026-11-14T15:33:25+11:00 start n50-m10000-flush0-glibc
+2026-11-14T15:33:43+11:00 done n50-m10000-flush0-glibc
+2026-11-14T15:33:43+11:00 start n50-m10000-flush0-jemalloc
+2026-11-14T15:34:03+11:00 done n50-m10000-flush0-jemalloc
+2026-11-14T15:34:03+11:00 start n50-m10000-flush0-jemalloc-conf
+2026-11-14T15:34:21+11:00 done n50-m10000-flush0-jemalloc-conf
+2026-11-14T15:34:21+11:00 start n50-m10000-flush1-glibc
+2026-11-14T15:34:47+11:00 done n50-m10000-flush1-glibc
+2026-11-14T15:34:47+11:00 start n50-m10000-flush1-jemalloc
+2026-11-14T15:35:10+11:00 done n50-m10000-flush1-jemalloc
+2026-11-14T15:35:10+11:00 start n50-m10000-flush1-jemalloc-conf
+2026-11-14T15:35:35+11:00 done n50-m10000-flush1-jemalloc-conf
+2026-11-14T15:35:35+11:00 start n200-m10000-flush0-glibc
+2026-11-14T15:36:52+11:00 done n200-m10000-flush0-glibc
+2026-11-14T15:36:52+11:00 start n200-m10000-flush0-jemalloc
+2026-11-14T15:38:15+11:00 done n200-m10000-flush0-jemalloc
+2026-11-14T15:38:15+11:00 start n200-m10000-flush0-jemalloc-conf
+2026-11-14T15:39:19+11:00 done n200-m10000-flush0-jemalloc-conf
+2026-11-14T15:39:20+11:00 start n200-m10000-flush1-glibc
+2026-11-14T15:40:26+11:00 done n200-m10000-flush1-glibc
+2026-11-14T15:40:26+11:00 start n200-m10000-flush1-jemalloc
+2026-11-14T15:41:41+11:00 done n200-m10000-flush1-jemalloc
+2026-11-14T15:41:41+11:00 start n200-m10000-flush1-jemalloc-conf
+2026-11-14T15:42:46+11:00 done n200-m10000-flush1-jemalloc-conf
+2026-11-14T15:42:46+11:00 matrix finished

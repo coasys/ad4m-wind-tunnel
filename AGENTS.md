@@ -268,6 +268,63 @@ silently produced wrong numbers, not errors:
     at HEAD. These errors existed before the platform-baseline changes. `tsx`
     does not check types, so the runner still works.
 
+## Fault injection (F1) and the store close bench
+
+`f1` (src/scenarios/f1-slow-executor.ts, helpers in src/fault/) is its own
+family: `--scenario fault` or `--scenario f1`, never in the default run.
+`scripts/f1-fault.sh` runs SDK client mode at every level and then legacy mode.
+
+- **The CPU fault is a cgroup quota on a systemd user scope.** The executor is
+  spawned through `ExecutorConfig.launcher` (`systemd-run --user --scope …`),
+  which execs in place, so the spawned pid is the executor. The quota is changed
+  with `systemctl --user set-property --runtime <unit>.scope CPUQuota=N%`.
+  Gotchas: `cpu.max` itself is not writable by the user (EACCES); `CPUQuota=`
+  (empty) does **not** lift a quota at run time and `CPUQuota=infinity` does not
+  parse, so "no fault" is `CPUQuota=<cores×100>%`; `-p CPUAccounting=yes` is
+  deprecated. Slowdown N× = `CPUQuota=100/N %` (1/N of one core).
+- **In-flight SPARQL evaluations** = threads named `ad4m-eval-watch` (kernel
+  comm of `ad4m-eval-watchdog`, one per running evaluation). **Executor
+  subscriptions** = `🔗 subscription … created` minus `🔗 n subscription(s)
+  dropped` in the executor's output, an upper bound (a cancelled or failed
+  subscribe is removed without a log line). There is no RPC that reports either.
+- `perspective.subscribeSparql` answers 501 at dev 4226948b1; use
+  `perspective.subscribeQuery {uuid, query, subscriptionId}` (client-minted id).
+  Updates (`query-subscription-update`) reach the opening socket without
+  `events.watch`.
+- The executor caps each connection at 8 opening live queries and 8 running
+  queries (`ws_rpc.rs`) and stops a SPARQL evaluation after 30 s. F1 gives
+  every client its own socket, as browsers do.
+
+`bench/store-close/` is a stand-alone Rust bench (own Cargo workspace; build
+with `~/.cargo/bin/cargo`). It does not delete its stores: every run leaves
+`bench/store-close/scratch/run-<pid>-<ms>/` (gitignored, like `target/`).
+`run-matrix.sh` writes `runs.jsonl`; `src/bench/store-close-summary.ts` turns
+it into SUMMARY.md.
+
+- A systemd user unit gets a **soft limit of 1024 open files**; 200 RocksDB
+  stores need more and the bench then fails at once with no JSON.
+  `run-matrix.sh` raises the soft limit to the hard one.
+- The shared measurement lock is often held for long stretches by other
+  sweeps, and each bench row runs in seconds. Take the lock once per batch:
+  `MS=1000 LOCKED=1 flock /tmp/arcadia-measure.lock bench/store-close/run-matrix.sh <out>`.
+  The script skips rows that already have a good result in `<out>/runs.jsonl`,
+  so a stopped matrix can be resumed.
+- Leftover executor subscriptions in F1: a timed-out `subscribeQuery` in SDK
+  mode sends `request.cancel` and is unregistered without a log line (counted
+  as `subCancels`). Legacy mode sends nothing, so its late reply is dropped and
+  the subscription stays registered: a real orphan. The SDK's
+  `LiveQuery.dispose()` without `cancelOpening` also leaves the pending
+  subscribe running; it is disposed when its reply arrives.
+
+**ADAM's jemalloc tuning is not applied (dev 4226948b1).** `cli/src/ad4m_executor.rs`
+exports `_rjem_malloc_conf`, but `cli/Cargo.toml` enables
+`unprefixed_malloc_on_supported_platforms`, so on Linux jemalloc reads
+`malloc_conf`. The string `dirty_decay_ms:1000` is not in the built binary and
+live executors have no `jemalloc_bg_thd` thread. `MALLOC_CONF=…` in the
+environment does work.
+
+`results/` is gitignored: results meant for a PR need `git add -f`.
+
 ## Conventions
 
 - Every new scenario must be registered in `src/scenarios/index.ts`.

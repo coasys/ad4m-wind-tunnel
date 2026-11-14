@@ -24,6 +24,7 @@ import {
   s15LeakAttribution, s16IdleCpu,
   p1IdleBaseline, p2SpaceCostPerspectives, p2SpaceCostNeighbourhoods,
   p3ColdOpen, p4SpaceRemoval, p5StorageAttribution,
+  f1SlowExecutor,
 } from "./scenarios/index.js";
 import { consoleReport, jsonReport, comparisonReport } from "./reporters.js";
 import { scenarioName } from "./platform/common.js";
@@ -55,6 +56,14 @@ const PLATFORM_SCENARIOS: Scenario[] = [
   p1IdleBaseline, p2SpaceCostPerspectives, p2SpaceCostNeighbourhoods,
   p3ColdOpen, p4SpaceRemoval, p5StorageAttribution,
 ];
+
+/**
+ * Fault-injection family: slow the executor down on purpose and watch for a
+ * pileup and the recovery. Not part of the default run (long, and needs a
+ * systemd user manager with the cpu controller). Select by id or with
+ * `--scenario fault`.
+ */
+const FAULT_SCENARIOS: Scenario[] = [f1SlowExecutor];
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -238,9 +247,9 @@ async function main(): Promise<void> {
   console.log("╚══════════════════════════════════════════════════════════════╝");
   console.log(`\nConfig: ${JSON.stringify(args, null, 2)}\n`);
 
-  const selectable = [...ALL_SCENARIOS, ...PLATFORM_SCENARIOS];
+  const selectable = [...ALL_SCENARIOS, ...PLATFORM_SCENARIOS, ...FAULT_SCENARIOS];
   const wanted = args.scenarios.flatMap((s) =>
-    s === "platform" ? PLATFORM_SCENARIOS.map((p) => p.id) : [s]
+    s === "platform" ? PLATFORM_SCENARIOS.map((p) => p.id) : s === "fault" ? FAULT_SCENARIOS.map((p) => p.id) : [s]
   );
   const scenarios = wanted.length > 0
     ? wanted.map((id) => {

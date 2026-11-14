@@ -1,0 +1,168 @@
+2026-11-14T15:00:36+11:00 start f1-churn-sdk mode=sdk levels=20,100
+loadavg at start: 25.72 10.29 8.16 2/3909 1992221
+╔══════════════════════════════════════════════════════════════╗
+║            AD4M WIND TUNNEL — Performance Testing           ║
+╚══════════════════════════════════════════════════════════════╝
+
+Config: {
+  "scenarios": [
+    "f1"
+  ],
+  "branches": [
+    "f1-churn-sdk"
+  ],
+  "skipBuild": true,
+  "executorPath": "/home/josh/.cache/ad4m-sfu-capacity/ad4m-executor"
+}
+
+Holochain: off | repeat: 1
+Scenarios: f1
+Branches: f1-churn-sdk
+
+════════════════════════════════════════════════════════════
+  Branch: f1-churn-sdk | Binary: /home/josh/.cache/ad4m-sfu-capacity/ad4m-executor
+  Port: 12400
+════════════════════════════════════════════════════════════
+
+
+[runner] Running f1: Slow Executor on f1-churn-sdk [holochain off]...
+[executor] Initializing data at /tmp/hex-wt-f1/ad4m-wt-data-f1-churn-sdk-f1...
+[executor] Starting on port 12400, data: /tmp/hex-wt-f1/ad4m-wt-data-f1-churn-sdk-f1
+(node:1992232) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[f1] seeded 30000 links in 5938 ms (perspective (no neighbourhood))
+[f1] level 20×: load 21.92 9.99 8.08; starting executor in scope hex-wt-f1exec-l20-1992232
+[executor] Starting on port 12400, data: /tmp/hex-wt-f1/ad4m-wt-data-f1-churn-sdk-f1
+[f1] level 20×: baseline 30s, fault 60s (quota 5%), recovery 90s
+[f1] 20× t=15s baseline: cpu 61.06% rss 313.61MB evals 0 execSubs 21 live 21 inflight 0 timeouts 0 resubs 0
+[f1] level 20×: fault on (cpu.max 5000 100000)
+[f1] 20× t=30s fault: cpu 239.76% rss 312.41MB evals 0 execSubs 21 live 21 inflight 0 timeouts 0 resubs 0
+[f1] 20× t=45s fault: cpu 5% rss 314.43MB evals 27 execSubs 21 live 11 inflight 62 timeouts 0 resubs 0
+[f1] 20× t=60s fault: cpu 5% rss 312.79MB evals 30 execSubs 21 live 11 inflight 141 timeouts 0 resubs 0
+[f1] 20× t=75s fault: cpu 5% rss 349.75MB evals 3 execSubs 21 live 11 inflight 171 timeouts 58 resubs 0
+[f1] level 20×: fault off (cpu.max 3200000 100000)
+[f1] 20× t=90s recovery: cpu 8% rss 379.3MB evals 23 execSubs 28 live 11 inflight 169 timeouts 137 resubs 0
+[f1] 20× t=105s recovery: cpu 109% rss 407.41MB evals 1 execSubs 41 live 21 inflight 1 timeouts 143 resubs 0
+[f1] 20× t=120s recovery: cpu 107.89% rss 410.85MB evals 2 execSubs 41 live 21 inflight 2 timeouts 143 resubs 0
+[f1] 20× t=135s recovery: cpu 100% rss 407.7MB evals 0 execSubs 41 live 21 inflight 0 timeouts 143 resubs 0
+[f1] 20× t=150s recovery: cpu 73.07% rss 405.96MB evals 1 execSubs 41 live 21 inflight 1 timeouts 143 resubs 0
+[f1] 20× t=165s recovery: cpu 62.06% rss 408.3MB evals 0 execSubs 41 live 21 inflight 0 timeouts 143 resubs 0
+[f1] 20× t=180s recovery: cpu 100% rss 410.48MB evals 0 execSubs 41 live 21 inflight 0 timeouts 143 resubs 0
+[f1] level 100×: load 2.42 5.9 6.82; starting executor in scope hex-wt-f1exec-l100-1992232
+[executor] Starting on port 12400, data: /tmp/hex-wt-f1/ad4m-wt-data-f1-churn-sdk-f1
+[f1] level 100×: baseline 30s, fault 60s (quota 1%), recovery 90s
+[f1] 100× t=15s baseline: cpu 65.13% rss 292.06MB evals 0 execSubs 21 live 21 inflight 0 timeouts 0 resubs 0
+[f1] level 100×: fault on (cpu.max 1000 100000)
+[f1] 100× t=30s fault: cpu 65% rss 295.16MB evals 0 execSubs 21 live 21 inflight 0 timeouts 0 resubs 0
+[f1] 100× t=45s fault: cpu 1% rss 294.73MB evals 19 execSubs 21 live 11 inflight 71 timeouts 0 resubs 0
+[f1] 100× t=60s fault: cpu 1% rss 294.65MB evals 20 execSubs 21 live 11 inflight 158 timeouts 0 resubs 0
+[f1] 100× t=75s fault: cpu 1% rss 298.75MB evals 3 execSubs 22 live 11 inflight 171 timeouts 67 resubs 0
+[f1] level 100×: fault off (cpu.max 3200000 100000)
+[f1] 100× t=90s recovery: cpu 5.99% rss 320.05MB evals 10 execSubs 25 live 11 inflight 170 timeouts 154 resubs 0
+[f1] 100× t=105s recovery: cpu 155.84% rss 393.77MB evals 0 execSubs 37 live 21 inflight 0 timeouts 170 resubs 0
+[f1] 100× t=120s recovery: cpu 82.92% rss 394.85MB evals 1 execSubs 37 live 21 inflight 1 timeouts 170 resubs 0
+[f1] 100× t=135s recovery: cpu 70% rss 394.32MB evals 0 execSubs 37 live 21 inflight 0 timeouts 170 resubs 0
+[f1] 100× t=150s recovery: cpu 119% rss 394.68MB evals 0 execSubs 37 live 21 inflight 0 timeouts 170 resubs 0
+[f1] 100× t=165s recovery: cpu 76% rss 402.49MB evals 1 execSubs 37 live 21 inflight 1 timeouts 170 resubs 0
+[f1] 100× t=180s recovery: cpu 73% rss 401.15MB evals 1 execSubs 37 live 21 inflight 1 timeouts 170 resubs 0
+[runner] f1 PASS: pileup from 20× slower; 20×: pileup, recovery none; 100×: no pileup, recovery none
+[reporter] Wrote /home/josh/workspaces/coasys/ad4m-wind-tunnel-fault-idle/results/fault-and-idle-close-2026-11-14/f1/f1-churn-sdk/f1-slow-executor.json (+ .md)
+
+================================================================================
+  AD4M WIND TUNNEL — RESULTS
+================================================================================
+
+┌─ f1-slow-executor [f1-churn-sdk] ✅ PASS
+│  Duration: 400928ms
+│  Summary: pileup from 20× slower; 20×: pileup, recovery none; 100×: no pileup, recovery none
+└───────────────────────────────────────────────────────────────────────────────
+
+================================================================================
+
+
+[runner] Done — 1 passed, 0 failed.
+2026-11-14T15:10:34+11:00 exit 0 f1-churn-sdk
+2026-11-14T15:10:34+11:00 start f1-churn-legacy mode=legacy levels=20,100
+loadavg at start: 78.49 45.58 21.83 1/3927 2026470
+╔══════════════════════════════════════════════════════════════╗
+║            AD4M WIND TUNNEL — Performance Testing           ║
+╚══════════════════════════════════════════════════════════════╝
+
+Config: {
+  "scenarios": [
+    "f1"
+  ],
+  "branches": [
+    "f1-churn-legacy"
+  ],
+  "skipBuild": true,
+  "executorPath": "/home/josh/.cache/ad4m-sfu-capacity/ad4m-executor"
+}
+
+Holochain: off | repeat: 1
+Scenarios: f1
+Branches: f1-churn-legacy
+
+════════════════════════════════════════════════════════════
+  Branch: f1-churn-legacy | Binary: /home/josh/.cache/ad4m-sfu-capacity/ad4m-executor
+  Port: 12400
+════════════════════════════════════════════════════════════
+
+
+[runner] Running f1: Slow Executor on f1-churn-legacy [holochain off]...
+[executor] Initializing data at /tmp/hex-wt-f1/ad4m-wt-data-f1-churn-legacy-f1...
+[executor] Starting on port 12400, data: /tmp/hex-wt-f1/ad4m-wt-data-f1-churn-legacy-f1
+(node:2026482) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[f1] seeded 30000 links in 5920 ms (perspective (no neighbourhood))
+[f1] level 20×: load 66.58 44.12 21.61; starting executor in scope hex-wt-f1exec-l20-2026482
+[executor] Starting on port 12400, data: /tmp/hex-wt-f1/ad4m-wt-data-f1-churn-legacy-f1
+[f1] level 20×: baseline 30s, fault 60s (quota 5%), recovery 90s
+[f1] 20× t=15s baseline: cpu 59% rss 328.01MB evals 0 execSubs 21 live 21 inflight 0 timeouts 0 resubs 0
+[f1] level 20×: fault on (cpu.max 5000 100000)
+[f1] 20× t=30s fault: cpu 104.1% rss 322.45MB evals 1 execSubs 21 live 21 inflight 1 timeouts 0 resubs 0
+[f1] 20× t=45s fault: cpu 5% rss 321.88MB evals 28 execSubs 21 live 11 inflight 42 timeouts 0 resubs 0
+[f1] 20× t=60s fault: cpu 5% rss 325.75MB evals 51 execSubs 31 live 11 inflight 66 timeouts 1 resubs 0
+[f1] 20× t=75s fault: cpu 5% rss 348.7MB evals 36 execSubs 36 live 11 inflight 112 timeouts 29 resubs 0
+[f1] level 20×: fault off (cpu.max 3200000 100000)
+[f1] 20× t=90s recovery: cpu 8.99% rss 394.24MB evals 21 execSubs 38 live 11 inflight 147 timeouts 51 resubs 0
+[f1] 20× t=105s recovery: cpu 92.09% rss 404.95MB evals 0 execSubs 41 live 21 inflight 0 timeouts 53 resubs 0
+[f1] 20× t=120s recovery: cpu 96% rss 394.91MB evals 0 execSubs 41 live 21 inflight 0 timeouts 53 resubs 0
+[f1] 20× t=135s recovery: cpu 85% rss 396.7MB evals 0 execSubs 41 live 21 inflight 0 timeouts 53 resubs 0
+[f1] 20× t=150s recovery: cpu 270% rss 399.02MB evals 0 execSubs 41 live 21 inflight 0 timeouts 53 resubs 0
+[f1] 20× t=165s recovery: cpu 170% rss 399.46MB evals 2 execSubs 41 live 20 inflight 2 timeouts 53 resubs 0
+[f1] 20× t=180s recovery: cpu 114.11% rss 394.46MB evals 1 execSubs 41 live 20 inflight 1 timeouts 53 resubs 0
+[f1] level 100×: load 4.62 24.39 18.01; starting executor in scope hex-wt-f1exec-l100-2026482
+[executor] Starting on port 12400, data: /tmp/hex-wt-f1/ad4m-wt-data-f1-churn-legacy-f1
+[f1] level 100×: baseline 30s, fault 60s (quota 1%), recovery 90s
+[f1] 100× t=15s baseline: cpu 105.11% rss 328.34MB evals 3 execSubs 21 live 18 inflight 3 timeouts 0 resubs 0
+[f1] level 100×: fault on (cpu.max 1000 100000)
+[f1] 100× t=30s fault: cpu 96.1% rss 331.06MB evals 1 execSubs 21 live 20 inflight 1 timeouts 0 resubs 0
+[f1] 100× t=45s fault: cpu 1% rss 332.98MB evals 19 execSubs 21 live 11 inflight 77 timeouts 0 resubs 0
+[f1] 100× t=60s fault: cpu 1% rss 333.37MB evals 21 execSubs 21 live 11 inflight 160 timeouts 1 resubs 0
+[f1] 100× t=75s fault: cpu 1% rss 330.87MB evals 15 execSubs 23 live 11 inflight 171 timeouts 75 resubs 0
+[f1] level 100×: fault off (cpu.max 3200000 100000)
+[f1] 100× t=90s recovery: cpu 10% rss 351.39MB evals 33 execSubs 29 live 11 inflight 169 timeouts 161 resubs 0
+[f1] 100× t=105s recovery: cpu 128.13% rss 392.64MB evals 2 execSubs 51 live 20 inflight 2 timeouts 178 resubs 0
+[f1] 100× t=120s recovery: cpu 129.13% rss 380.36MB evals 3 execSubs 51 live 20 inflight 3 timeouts 178 resubs 0
+[f1] 100× t=135s recovery: cpu 134.13% rss 385.23MB evals 1 execSubs 51 live 20 inflight 1 timeouts 178 resubs 0
+[f1] 100× t=150s recovery: cpu 197.8% rss 381.26MB evals 1 execSubs 51 live 20 inflight 1 timeouts 178 resubs 0
+[f1] 100× t=165s recovery: cpu 92.91% rss 386.46MB evals 1 execSubs 51 live 20 inflight 1 timeouts 178 resubs 0
+[f1] 100× t=180s recovery: cpu 92.09% rss 387.45MB evals 1 execSubs 51 live 20 inflight 1 timeouts 178 resubs 0
+[runner] f1 PASS: pileup from 20× slower; 20×: pileup, recovery none; 100×: pileup, recovery none
+[reporter] Wrote /home/josh/workspaces/coasys/ad4m-wind-tunnel-fault-idle/results/fault-and-idle-close-2026-11-14/f1/f1-churn-legacy/f1-slow-executor.json (+ .md)
+
+================================================================================
+  AD4M WIND TUNNEL — RESULTS
+================================================================================
+
+┌─ f1-slow-executor [f1-churn-legacy] ✅ PASS
+│  Duration: 399960ms
+│  Summary: pileup from 20× slower; 20×: pileup, recovery none; 100×: pileup, recovery none
+└───────────────────────────────────────────────────────────────────────────────
+
+================================================================================
+
+
+[runner] Done — 1 passed, 0 failed.
+2026-11-14T15:22:48+11:00 exit 0 f1-churn-legacy

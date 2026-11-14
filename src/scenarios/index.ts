@@ -27,3 +27,4 @@ export { p2SpaceCostPerspectives, p2SpaceCostNeighbourhoods } from "./p2-space-c
 export { p3ColdOpen } from "./p3-cold-open.js";
 export { p4SpaceRemoval } from "./p4-space-removal.js";
 export { p5StorageAttribution } from "./p5-storage-attribution.js";
+export { f1SlowExecutor } from "./f1-slow-executor.js";
