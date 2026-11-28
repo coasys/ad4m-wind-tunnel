@@ -1,2 +1,3 @@
 {"job":"integration-tests-sfu","run_id":"circleci-93218","verdict":"report-only","regressions":[],"checked_at":"2026-11-26T03:14:29.979Z"}
 {"job":"integration-tests-sfu","run_id":"circleci-94110","verdict":"report-only","regressions":[],"checked_at":"2026-11-27T03:12:17.092Z"}
+{"job":"integration-tests-sfu","run_id":"circleci-95738","verdict":"report-only","regressions":[],"checked_at":"2026-11-28T03:18:04.421Z"}
