@@ -21,6 +21,7 @@ import {
   s9NeighbourhoodMemoryLeak,
   s10SubscriptionFanout, s12PersistenceColdQuery, s13ReadWriteMix, s14MultiPerspectiveLoad,
   s15LeakAttribution,
+  u1WeCallTranscription,
 } from "./scenarios/index.js";
 import { consoleReport, jsonReport, comparisonReport } from "./reporters.js";
 import { config, validateAdamRepo } from "./config.js";
@@ -38,6 +39,9 @@ const ALL_SCENARIOS: Scenario[] = [
   s10SubscriptionFanout, s12PersistenceColdQuery, s13ReadWriteMix, s14MultiPerspectiveLoad,
   s15LeakAttribution,
 ];
+
+/** Run only when named with --scenario: they need more than an executor (U1: WE, Chrome, ffmpeg). */
+const OPT_IN_SCENARIOS: Scenario[] = [u1WeCallTranscription];
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -141,6 +145,7 @@ async function runScenariosForBranch(
         adminToken: config.adminToken,
         adamRepoPath: config.adamRepoPath,
         tmpDirBase: config.tmpDirBase,
+        resultsDir: join(RESULTS_DIR, dirName),
         executorPath: binaryPath,
       };
 
@@ -200,7 +205,7 @@ async function main(): Promise<void> {
   console.log(`\nConfig: ${JSON.stringify(args, null, 2)}\n`);
 
   const scenarios = args.scenarios.length > 0
-    ? ALL_SCENARIOS.filter((s) => args.scenarios.includes(s.id))
+    ? [...ALL_SCENARIOS, ...OPT_IN_SCENARIOS].filter((s) => args.scenarios.includes(s.id))
     : ALL_SCENARIOS;
 
   // Branches come from CLI args; default to "default" label if none specified

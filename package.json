@@ -10,10 +10,13 @@
     "scenario:s2": "tsx src/main.ts --scenario s2",
     "scenario:s5": "tsx src/main.ts --scenario s5",
     "scenario:m1": "tsx src/main.ts --scenario m1",
+    "scenario:u1": "tsx src/main.ts --scenario u1",
+    "test": "tsx --test 'src/**/*.test.ts'",
     "report": "tsx src/report.ts"
   },
   "dependencies": {
     "isomorphic-git": "^1.38.7",
+    "playwright-core": "^1.63.0",
     "ws": "^8.16.0"
   },
   "devDependencies": {
